@@ -1,0 +1,39 @@
+html, body, #app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0b0e14;
+  color: #e5e9f0;
+  font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+html.dark {
+  --el-bg-color: #10151f;
+  --el-bg-color-overlay: #161d29;
+  --el-border-color-light: #2a3345;
+  --el-border-color-lighter: #232b3b;
+  --el-fill-color-blank: #131926;
+  --el-text-color-primary: #e5e9f0;
+  --el-text-color-regular: #c0c7d4;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a3140;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3a455c;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
