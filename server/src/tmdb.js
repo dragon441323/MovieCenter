@@ -85,9 +85,21 @@ export async function tmdbFetch(pathname, params = {}) {
   }
 }
 
-export async function searchMovies(query) {
-  const data = await tmdbFetch('/search/movie', { query })
+export async function searchMovies(query, year) {
+  const data = await tmdbFetch('/search/movie', {
+    query,
+    year: Number.isInteger(year) && year > 0 ? year : undefined
+  })
   return data.results || []
+}
+
+export async function searchPerson(query) {
+  const data = await tmdbFetch('/search/person', { query })
+  return data.results || []
+}
+
+export async function findByExternalId(externalId, externalSource) {
+  return tmdbFetch(`/find/${encodeURIComponent(externalId)}`, { external_source: externalSource })
 }
 
 export async function getMovieDetails(tmdbId) {

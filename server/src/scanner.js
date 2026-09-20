@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { db } from './db.js'
+import { updateDoubanRanks } from './douban.js'
 
 const VIDEO_EXTS = new Set([
   '.mkv', '.mp4', '.avi', '.rmvb', '.rm', '.ts', '.iso', '.m2ts', '.mts',
@@ -130,6 +131,9 @@ export async function scanAll() {
       db.exec('ROLLBACK')
       throw err
     }
+
+    // 扫描入库后重新匹配豆瓣 Top 250（榜单未抓取过时跳过）
+    try { updateDoubanRanks() } catch {}
 
     const result = {
       startedAt: scanState.startedAt,

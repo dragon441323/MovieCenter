@@ -19,6 +19,9 @@ const proxyUrl = ref('')
 const savingKey = ref(false)
 const hasKey = computed(() => !!apiKey.value.trim())
 
+const playerPath = ref('')
+const detectingPlayer = ref(false)
+
 const testing = ref(false)
 const testResult = ref(null)
 
@@ -29,10 +32,14 @@ watch(visible, async v => {
   if (v) {
     await store.fetchScanPaths()
     if (!store.scanPaths.length) await detect(true)
+    await store.fetchMeta()
     await loadSettings()
     await pollBatchOnce()
+    loadDouban()
+    pollDoubanOnce()
   } else {
     stopBatchPolling()
+    stopDoubanPolling()
   }
 })
 
@@ -42,6 +49,7 @@ async function loadSettings() {
     apiKey.value = s.tmdb_api_key
     language.value = s.tmdb_language
     proxyUrl.value = s.tmdb_proxy
+    playerPath.value = s.player_path
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -53,11 +61,13 @@ async function saveSettings(silent = false) {
     const s = await api.saveSettings({
       tmdb_api_key: apiKey.value.trim(),
       tmdb_language: language.value,
-      tmdb_proxy: proxyUrl.value.trim()
+      tmdb_proxy: proxyUrl.value.trim(),
+      player_path: playerPath.value.trim()
     })
     apiKey.value = s.tmdb_api_key
     language.value = s.tmdb_language
     proxyUrl.value = s.tmdb_proxy
+    playerPath.value = s.player_path
     if (!silent) ElMessage.success('设置已保存')
     return true
   } catch (e) {
@@ -65,6 +75,24 @@ async function saveSettings(silent = false) {
     return false
   } finally {
     savingKey.value = false
+  }
+}
+
+async function detectPlayer() {
+  detectingPlayer.value = true
+  try {
+    const r = await api.detectPlayer()
+    if (r.path) {
+      playerPath.value = r.path
+      ElMessage.success('已自动检测到 PotPlayer')
+      await saveSettings(true)
+    } else {
+      ElMessage.warning('未检测到 PotPlayer，请手动填写播放器路径')
+    }
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    detectingPlayer.value = false
   }
 }
 
@@ -121,7 +149,10 @@ function stopBatchPolling() {
   }
 }
 
-onUnmounted(stopBatchPolling)
+onUnmounted(() => {
+  stopBatchPolling()
+  stopDoubanPolling()
+})
 
 async function detect(silent = false) {
   detecting.value = true
@@ -174,6 +205,108 @@ async function removePath(sp) {
 }
 
 const lastResult = computed(() => scanState.value?.lastResult)
+
+const doubanInfo = ref(null)
+const doubanRefreshing = ref(false)
+const doubanTime = computed(() => {
+  const t = doubanInfo.value?.updated_at
+  if (!t) return ''
+  const d = new Date(t)
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+})
+
+async function loadDouban() {
+  try { doubanInfo.value = await api.doubanTop250() } catch {}
+}
+
+async function refreshDouban() {
+  doubanRefreshing.value = true
+  try {
+    doubanInfo.value = await api.doubanRefresh()
+    ElMessage.success(`榜单已更新，库内上榜 ${doubanInfo.value.matched} 部`)
+    await store.fetchMovies()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    doubanRefreshing.value = false
+  }
+}
+
+const doubanSync = ref({ running: false, total: 0, processed: 0, applied: 0, skipped: 0, failed: 0, current: null, aborted: false, message: null, errors: [] })
+let doubanTimer = null
+
+async function startDoubanSync() {
+  try {
+    const r = await api.doubanSyncRatings()
+    if (!r.total) {
+      ElMessage.success('库中没有电影')
+      return
+    }
+    ElMessage.success(`开始同步 ${r.total} 部电影的豆瓣评分`)
+    startDoubanPolling()
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+function startDoubanPolling() {
+  stopDoubanPolling()
+  doubanTimer = setInterval(async () => {
+    try {
+      const st = await api.doubanSyncStatus()
+      doubanSync.value = st
+      if (!st.running) {
+        stopDoubanPolling()
+        if (st.message) {
+          ElMessage.warning(st.message)
+        } else {
+          ElMessage.success(`同步完成：已获取 ${st.applied} 部豆瓣评分`)
+        }
+        await Promise.all([store.fetchMovies(), loadDouban()])
+      }
+    } catch {}
+  }, 1000)
+}
+
+async function pollDoubanOnce() {
+  try {
+    const st = await api.doubanSyncStatus()
+    doubanSync.value = st
+    if (st.running && !doubanTimer) startDoubanPolling()
+  } catch {}
+}
+
+function stopDoubanPolling() {
+  if (doubanTimer) {
+    clearInterval(doubanTimer)
+    doubanTimer = null
+  }
+}
+
+const cleaning = ref(false)
+const missingCount = computed(() => store.meta.stats?.missing || 0)
+
+async function cleanupMissing() {
+  if (!missingCount.value) return
+  try {
+    await ElMessageBox.confirm(
+      `将删除 ${missingCount.value} 条文件已缺失的电影记录（含其标签与评分历史），此操作不可恢复。确定继续吗？`,
+      '清理缺失记录',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  cleaning.value = true
+  try {
+    const r = await api.cleanupMissing()
+    ElMessage.success(`已删除 ${r.removed} 条缺失记录`)
+    await Promise.all([store.fetchMovies(), store.fetchMeta()])
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    cleaning.value = false
+  }
+}
 </script>
 
 <template>
@@ -210,6 +343,32 @@ const lastResult = computed(() => scanState.value?.lastResult)
           无法访问：{{ lastResult.rootErrors.map(e => e.path).join('、') }}
         </div>
       </div>
+    </div>
+
+    <div class="scan-row cleanup-row">
+      <el-button type="danger" plain :loading="cleaning" :disabled="!missingCount" @click="cleanupMissing">
+        清理缺失记录
+      </el-button>
+      <span class="tip">
+        <template v-if="missingCount">删除 {{ missingCount }} 条文件已缺失的电影记录（不会影响仍存在的电影）</template>
+        <template v-else>当前没有缺失记录</template>
+      </span>
+    </div>
+
+    <el-divider content-position="left">播放器</el-divider>
+
+    <div class="tmdb-row">
+      <el-input
+        v-model="playerPath"
+        class="key-input"
+        placeholder="PotPlayer 路径，留空则自动检测（如 C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe）"
+        clearable
+      />
+      <el-button :loading="detectingPlayer" @click="detectPlayer">自动检测</el-button>
+      <el-button type="primary" :loading="savingKey" @click="saveSettings">保存</el-button>
+    </div>
+    <div class="tmdb-row">
+      <span class="tip">播放时通过本地 PotPlayer 打开视频文件；未填路径时会按常见安装位置自动查找</span>
     </div>
 
     <el-divider content-position="left">TMDB 数据同步</el-divider>
@@ -279,6 +438,41 @@ const lastResult = computed(() => scanState.value?.lastResult)
         <div v-for="e in batch.errors.slice(0, 5)" :key="e" class="batch-error">{{ e }}</div>
         <div v-if="batch.errors.length > 5" class="batch-error">…共 {{ batch.errors.length }} 条</div>
       </div>
+    </div>
+
+    <el-divider content-position="left">豆瓣 Top 250</el-divider>
+
+    <div class="tmdb-row">
+      <el-button type="primary" :loading="doubanRefreshing" @click="refreshDouban">刷新榜单</el-button>
+      <span v-if="doubanInfo" class="tip">
+        榜单 {{ doubanInfo.total }} 部 · 库内上榜 {{ doubanInfo.matched }} 部<template v-if="doubanTime"> · 更新于 {{ doubanTime }}</template>
+      </span>
+      <span v-else class="tip">抓取豆瓣 Top 250 榜单，自动标记库内上榜电影（卡片和详情页显示徽章）</span>
+    </div>
+    <div class="tmdb-row">
+      <el-button type="primary" :loading="doubanSync.running" @click="startDoubanSync">同步豆瓣评分</el-button>
+      <span v-if="doubanInfo" class="tip">
+        已有豆瓣评分 {{ doubanInfo.rated }} 部 / 共 {{ store.meta.stats?.total ?? '—' }} 部
+      </span>
+      <span v-else class="tip">为库内电影抓取豆瓣评分（已上榜 Top 250 的直接使用榜单数据）</span>
+    </div>
+    <div v-if="doubanSync.total" class="batch-box">
+      <el-progress
+        :percentage="Math.min(100, Math.round((doubanSync.processed / doubanSync.total) * 100))"
+        :stroke-width="8"
+        :status="doubanSync.running ? undefined : 'success'"
+      />
+      <div class="batch-stats">
+        进度 {{ doubanSync.processed }}/{{ doubanSync.total }} · 已获取 {{ doubanSync.applied }} · 无匹配 {{ doubanSync.skipped }}<template v-if="doubanSync.failed"> · 失败 {{ doubanSync.failed }}</template><template v-if="doubanSync.running && doubanSync.current"> · 正在处理：{{ doubanSync.current }}</template>
+      </div>
+      <div v-if="doubanSync.message" class="batch-error">{{ doubanSync.message }}</div>
+      <div v-if="doubanSync.errors?.length" class="batch-errors">
+        <div v-for="e in doubanSync.errors.slice(0, 5)" :key="e" class="batch-error">{{ e }}</div>
+        <div v-if="doubanSync.errors.length > 5" class="batch-error">…共 {{ doubanSync.errors.length }} 条错误</div>
+      </div>
+    </div>
+    <div class="tmdb-row">
+      <span class="tip">打开页面时会自动抓取并每天检查更新；电影墙排序中可选择「豆瓣 Top 250」按名次浏览</span>
     </div>
 
     <template #footer>
@@ -364,6 +558,10 @@ const lastResult = computed(() => scanState.value?.lastResult)
 
 .scan-errors {
   color: #e6a23c;
+}
+
+.cleanup-row {
+  margin-top: 10px;
 }
 
 .tmdb-row {

@@ -4,6 +4,36 @@ import { parseCategories } from './movies.js'
 
 export const metaRouter = Router()
 
+metaRouter.get('/directors', (req, res) => {
+  const map = new Map()
+  for (const r of db.prepare("SELECT director FROM movie WHERE missing = 0 AND director != ''").all()) {
+    for (const name of String(r.director).split(/[\/、,，;；|]/).map(s => s.trim()).filter(Boolean)) {
+      map.set(name, (map.get(name) || 0) + 1)
+    }
+  }
+  const items = [...map.entries()].map(([name, count]) => ({ name, count }))
+  items.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hans-CN'))
+  res.json({ items })
+})
+
+metaRouter.get('/actors', (req, res) => {
+  const map = new Map()
+  for (const r of db.prepare("SELECT actors FROM movie WHERE missing = 0 AND actors != ''").all()) {
+    let arr = []
+    try { arr = JSON.parse(r.actors) } catch { continue }
+    if (!Array.isArray(arr)) continue
+    for (const name of arr) {
+      if (typeof name === 'string' && name.trim()) {
+        const n = name.trim()
+        map.set(n, (map.get(n) || 0) + 1)
+      }
+    }
+  }
+  const items = [...map.entries()].map(([name, count]) => ({ name, count }))
+  items.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hans-CN'))
+  res.json({ items })
+})
+
 metaRouter.get('/', (req, res) => {
   const catSet = new Set()
   for (const r of db.prepare("SELECT category FROM movie WHERE missing = 0 AND category != ''").all()) {

@@ -7,7 +7,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export const DATA_DIR = process.env.MC_DATA_DIR || path.resolve(__dirname, '../data')
 export const COVERS_DIR = path.join(DATA_DIR, 'covers')
+export const PERSONS_DIR = path.join(DATA_DIR, 'persons')
 fs.mkdirSync(COVERS_DIR, { recursive: true })
+fs.mkdirSync(PERSONS_DIR, { recursive: true })
 
 export const db = new DatabaseSync(path.join(DATA_DIR, 'moviecenter.db'))
 
@@ -45,6 +47,7 @@ db.exec(`
     watched INTEGER NOT NULL DEFAULT 0,
     watch_count INTEGER NOT NULL DEFAULT 0,
     tmdb_id INTEGER,
+    original_title TEXT NOT NULL DEFAULT '',
     missing INTEGER NOT NULL DEFAULT 0,
     last_scan_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -62,17 +65,48 @@ db.exec(`
     PRIMARY KEY (movie_id, tag_id)
   );
 
+  CREATE TABLE IF NOT EXISTS rating_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    movie_id INTEGER NOT NULL REFERENCES movie(id) ON DELETE CASCADE,
+    rating REAL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE INDEX IF NOT EXISTS idx_movie_category ON movie(category);
   CREATE INDEX IF NOT EXISTS idx_movie_missing ON movie(missing);
   CREATE INDEX IF NOT EXISTS idx_movie_year ON movie(year);
   CREATE INDEX IF NOT EXISTS idx_movie_created ON movie(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_movie_tag_tag ON movie_tag(tag_id);
+  CREATE INDEX IF NOT EXISTS idx_rating_history_movie ON rating_history(movie_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS person (
+    tmdb_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    profile_path TEXT NOT NULL DEFAULT '',
+    photo TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS douban_top250 (
+    rank INTEGER PRIMARY KEY,
+    douban_id TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    original_title TEXT NOT NULL DEFAULT '',
+    year INTEGER,
+    rating REAL
+  );
 `)
 
 const movieCols = db.prepare('PRAGMA table_info(movie)').all().map(c => c.name)
 if (!movieCols.includes('my_rating')) db.exec('ALTER TABLE movie ADD COLUMN my_rating REAL')
 if (!movieCols.includes('watched')) db.exec('ALTER TABLE movie ADD COLUMN watched INTEGER NOT NULL DEFAULT 0')
 if (!movieCols.includes('watch_count')) db.exec('ALTER TABLE movie ADD COLUMN watch_count INTEGER NOT NULL DEFAULT 0')
+if (!movieCols.includes('original_title')) db.exec('ALTER TABLE movie ADD COLUMN original_title TEXT NOT NULL DEFAULT ""')
+if (!movieCols.includes('douban_rank')) db.exec('ALTER TABLE movie ADD COLUMN douban_rank INTEGER')
+if (!movieCols.includes('douban_id')) db.exec('ALTER TABLE movie ADD COLUMN douban_id TEXT')
+if (!movieCols.includes('douban_rating')) db.exec('ALTER TABLE movie ADD COLUMN douban_rating REAL')
+db.exec('CREATE INDEX IF NOT EXISTS idx_movie_douban ON movie(douban_id)')
 
 const legacyCategories = db.prepare(
   "SELECT id, category FROM movie WHERE category != '' AND category NOT LIKE '[%'"

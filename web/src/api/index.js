@@ -22,8 +22,13 @@ function toQuery(params) {
 export const api = {
   movies: (params = {}) => request('GET', '/api/movies?' + toQuery(params)),
   movie: id => request('GET', `/api/movies/${id}`),
+  movieRatings: id => request('GET', `/api/movies/${id}/ratings`),
+  updateRatingNote: (id, rid, note) => request('PUT', `/api/movies/${id}/ratings/${rid}`, { note }),
+  removeRating: (id, rid) => request('DELETE', `/api/movies/${id}/ratings/${rid}`),
   updateMovie: (id, data) => request('PUT', `/api/movies/${id}`, data),
   watchMovie: id => request('POST', `/api/movies/${id}/watch`),
+  playMovie: id => request('POST', `/api/movies/${id}/play`),
+  detectPlayer: () => request('GET', '/api/player'),
   uploadCover: async (id, file) => {
     const fd = new FormData()
     fd.append('file', file)
@@ -35,16 +40,25 @@ export const api = {
   removeCover: id => request('DELETE', `/api/movies/${id}/cover`),
   tags: () => request('GET', '/api/tags'),
   meta: () => request('GET', '/api/meta'),
+  directors: () => request('GET', '/api/meta/directors'),
+  actors: () => request('GET', '/api/meta/actors'),
+  personPhotos: names => request('POST', '/api/person/photos', { names }),
   scanPaths: () => request('GET', '/api/scan/paths'),
   detectScanPaths: () => request('POST', '/api/scan/detect'),
   addScanPath: path => request('POST', '/api/scan/paths', { path }),
   removeScanPath: id => request('DELETE', `/api/scan/paths/${id}`),
   triggerScan: () => request('POST', '/api/scan'),
   scanStatus: () => request('GET', '/api/scan/status'),
+  cleanupMissing: () => request('DELETE', '/api/scan/missing'),
   settings: () => request('GET', '/api/settings'),
   saveSettings: data => request('PUT', '/api/settings', data),
-  scrapeMovie: (id, tmdbId) => request('POST', `/api/scrape/${id}`, tmdbId ? { tmdbId } : {}),
+  scrapeMovie: (id, tmdbId, imdbId) => request('POST', `/api/scrape/${id}`, tmdbId ? { tmdbId } : imdbId ? { imdbId } : {}),
+  scrapeSearch: (query, year) => request('POST', '/api/scrape/search', { query, year: year || null }),
   scrapeBatch: () => request('POST', '/api/scrape/batch'),
   scrapeBatchStatus: () => request('GET', '/api/scrape/batch/status'),
-  testScrape: () => request('GET', '/api/scrape/test')
+  testScrape: () => request('GET', '/api/scrape/test'),
+  doubanTop250: () => request('GET', '/api/douban/top250'),
+  doubanRefresh: () => request('POST', '/api/douban/refresh'),
+  doubanSyncRatings: () => request('POST', '/api/douban/ratings'),
+  doubanSyncStatus: () => request('GET', '/api/douban/ratings')
 }

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import fs from 'node:fs'
 import { db } from '../db.js'
 
 export const settingsRouter = Router()
@@ -11,7 +12,8 @@ function getSettings() {
   return {
     tmdb_api_key: map.tmdb_api_key || '',
     tmdb_language: LANGS.includes(map.tmdb_language) ? map.tmdb_language : 'zh-CN',
-    tmdb_proxy: map.tmdb_proxy || ''
+    tmdb_proxy: map.tmdb_proxy || '',
+    player_path: map.player_path || ''
   }
 }
 
@@ -37,6 +39,13 @@ settingsRouter.put('/', (req, res) => {
     const lang = String(b.tmdb_language || '')
     if (!LANGS.includes(lang)) return res.status(400).json({ error: '不支持的语言' })
     upsert('tmdb_language', lang)
+  }
+  if ('player_path' in b) {
+    const p = String(b.player_path || '').trim()
+    if (p && !fs.existsSync(p)) {
+      return res.status(400).json({ error: '播放器路径不存在，请检查后重试' })
+    }
+    upsert('player_path', p)
   }
   res.json(getSettings())
 })

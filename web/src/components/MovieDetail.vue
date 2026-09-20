@@ -1,7 +1,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Star, StarFilled, Film, CircleCheck, CircleCheckFilled, Plus } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Star, StarFilled, Film, CircleCheck, CircleCheckFilled, Plus, CaretRight } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatSize } from '../utils'
 import { useLibraryStore } from '../stores/library'
@@ -22,7 +22,7 @@ const uploading = ref(false)
 const fileInput = ref(null)
 
 const form = reactive({
-  title: '', year: null, categories: [], director: '',
+  title: '', original_title: '', year: null, categories: [], director: '',
   actors: [], tags: [], rating: null, my_rating: null,
   favorite: false, watched: false, watch_count: 0, synopsis: ''
 })
@@ -37,6 +37,7 @@ watch(visible, v => {
 
 function resetForm(m) {
   form.title = m.title
+  form.original_title = m.original_title || ''
   form.year = m.year
   form.categories = m.categories ? [...m.categories] : []
   form.director = m.director || ''
@@ -59,6 +60,7 @@ async function save() {
   try {
     const updated = await api.updateMovie(props.movie.id, {
       title: form.title.trim(),
+      original_title: form.original_title.trim(),
       year: form.year,
       categories: form.categories,
       director: form.director,
@@ -74,6 +76,7 @@ async function save() {
     ElMessage.success('已保存')
     editing.value = false
     emit('updated', updated)
+    loadRatings()
   } catch (e) {
     ElMessage.error(e.message)
   } finally {
@@ -103,6 +106,7 @@ async function onMyRate(v) {
   try {
     const updated = await api.updateMovie(props.movie.id, { my_rating: v || null })
     emit('updated', updated)
+    loadRatings()
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -115,6 +119,82 @@ async function incWatchCount() {
   } catch (e) {
     ElMessage.error(e.message)
   }
+}
+
+async function play() {
+  try {
+    await api.playMovie(props.movie.id)
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+// 评分历史
+const ratings = ref([])
+const ratingLoading = ref(false)
+const noteDialogVisible = ref(false)
+const savingNote = ref(false)
+const noteForm = reactive({ id: null, note: '' })
+
+async function loadRatings() {
+  if (!props.movie?.id) return
+  ratingLoading.value = true
+  try {
+    const data = await api.movieRatings(props.movie.id)
+    ratings.value = data.items
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    ratingLoading.value = false
+  }
+}
+
+watch(() => props.movie?.id, id => {
+  if (id) loadRatings()
+})
+
+function openNoteDialog(r) {
+  noteForm.id = r.id
+  noteForm.note = r.note || ''
+  noteDialogVisible.value = true
+}
+
+async function saveNote() {
+  savingNote.value = true
+  try {
+    const note = noteForm.note.trim()
+    await api.updateRatingNote(props.movie.id, noteForm.id, note)
+    const i = ratings.value.findIndex(x => x.id === noteForm.id)
+    if (i >= 0) ratings.value[i].note = note
+    noteDialogVisible.value = false
+    ElMessage.success('评价已保存')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    savingNote.value = false
+  }
+}
+
+async function removeRating(r) {
+  try {
+    await ElMessageBox.confirm('删除这条评分记录？', '提示', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+  } catch { return }
+  try {
+    await api.removeRating(props.movie.id, r.id)
+    ratings.value = ratings.value.filter(x => x.id !== r.id)
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+// SQLite datetime('now') 为 UTC，转本地时间展示
+function formatHistoryTime(s) {
+  if (!s) return ''
+  const [date, time] = s.split(' ')
+  if (!date || !time) return s
+  const [y, mo, da] = date.split('-').map(Number)
+  const [h, mi] = time.split(':').map(Number)
+  return new Date(Date.UTC(y, mo - 1, da, h, mi)).toLocaleString('zh-CN', { hour12: false })
 }
 
 function pickCover() {
@@ -163,9 +243,22 @@ const videoName = computed(() => {
   return p.split(/[\\/]/).pop() || p
 })
 
+// 优先展示 TMDB 原名；没有时回退解析标题中的英文部分（如「星际穿越 Interstellar」→ Interstellar）
+const displayOriginal = computed(() => {
+  const t = props.movie.title || ''
+  const orig = props.movie.original_title || ''
+  if (orig && orig !== t) return orig
+  if (orig === t) return ''
+  const m = t.match(/([A-Za-z][A-Za-z0-9 .'&:()-]*)/)
+  const parsed = m ? m[0].trim() : ''
+  return parsed && parsed !== t ? parsed : ''
+})
+
 const scraping = ref(false)
 const pickerVisible = ref(false)
 const candidates = ref([])
+const searching = ref(false)
+const looking = ref(false)
 
 async function scrape(tmdbId) {
   scraping.value = true
@@ -185,14 +278,42 @@ async function scrape(tmdbId) {
     scraping.value = false
   }
 }
+
+async function onManualSearch({ query, year }) {
+  searching.value = true
+  try {
+    candidates.value = await api.scrapeSearch(query, year)
+    pickerVisible.value = true
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    searching.value = false
+  }
+}
+
+async function onLookup(imdbId) {
+  looking.value = true
+  try {
+    const r = await api.scrapeMovie(props.movie.id, null, imdbId)
+    if (r.status === 'applied') {
+      ElMessage.success('TMDB 信息已应用')
+      pickerVisible.value = false
+      emit('updated', r.movie)
+    }
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    looking.value = false
+  }
+}
 </script>
 
 <template>
   <el-dialog
     v-model="visible"
     :title="editing ? '编辑电影' : '电影详情'"
-    width="860px"
-    top="5vh"
+    width="min(50vw, 1000px)"
+    align-center
     class="movie-dialog"
   >
     <div v-if="!editing" class="detail-body">
@@ -202,7 +323,11 @@ async function scrape(tmdbId) {
       </div>
       <div class="detail-info">
         <div class="head-row">
-          <h2>{{ movie.title }}<span v-if="movie.year" class="year">（{{ movie.year }}）</span></h2>
+          <div class="title-block">
+            <h2>{{ movie.title }}<span v-if="movie.year" class="year">（{{ movie.year }}）</span></h2>
+            <div v-if="displayOriginal" class="orig-title">{{ displayOriginal }}</div>
+            <div v-if="movie.douban_rank" class="douban-tag">豆瓣 Top 250 第 {{ movie.douban_rank }} 名</div>
+          </div>
           <div class="head-actions">
             <el-tooltip :content="movie.watched ? '标记为未看' : '标记为已看'" placement="top">
               <el-button
@@ -230,6 +355,7 @@ async function scrape(tmdbId) {
         </div>
         <div class="rating-row">
           <span v-if="movie.rating != null" class="score tmdb">TMDB {{ Number(movie.rating).toFixed(1) }}</span>
+          <span v-if="movie.douban_rating != null" class="score douban">豆瓣 {{ Number(movie.douban_rating).toFixed(1) }}</span>
           <div class="my-rate">
             <span class="my-rate-label">我的评分</span>
             <el-rate
@@ -240,6 +366,25 @@ async function scrape(tmdbId) {
               @change="onMyRate"
             />
             <span v-if="movie.my_rating != null" class="my-rate-num">{{ Number(movie.my_rating).toFixed(1) }}</span>
+          </div>
+        </div>
+        <div v-loading="ratingLoading" class="rating-history">
+          <div class="rh-header"><span class="rh-title">评分历史</span></div>
+          <div v-if="!ratings.length" class="rh-empty">暂无记录，修改「我的评分」后自动添加</div>
+          <div v-for="r in ratings" :key="r.id" class="rh-item">
+            <div class="rh-body">
+              <div class="rh-main">
+                <span class="rh-rating">★ {{ r.rating != null ? Number(r.rating).toFixed(1) : '—' }}</span>
+                <span class="rh-time">{{ formatHistoryTime(r.created_at) }}</span>
+              </div>
+              <div v-if="r.note" class="rh-note">{{ r.note }}</div>
+            </div>
+            <div class="rh-actions">
+              <el-button link type="primary" size="small" @click="openNoteDialog(r)">
+                {{ r.note ? '编辑评价' : '写评价' }}
+              </el-button>
+              <el-button link type="danger" size="small" @click="removeRating(r)">删除</el-button>
+            </div>
           </div>
         </div>
         <dl class="facts">
@@ -285,6 +430,9 @@ async function scrape(tmdbId) {
       <el-form label-width="80px" class="edit-form" label-position="left">
         <el-form-item label="标题" required>
           <el-input v-model="form.title" maxlength="200" />
+        </el-form-item>
+        <el-form-item label="英文名">
+          <el-input v-model="form.original_title" maxlength="200" placeholder="原名 / 英文名（可留空，留空时自动从标题提取）" />
         </el-form-item>
         <div class="form-row">
           <el-form-item label="年份">
@@ -369,8 +517,9 @@ async function scrape(tmdbId) {
 
     <template #footer>
       <div v-if="!editing">
+        <el-button v-if="!movie.missing" type="primary" @click="play">立即播放</el-button>
         <el-button :loading="scraping" @click="scrape()">TMDB 同步</el-button>
-        <el-button type="primary" @click="editing = true">编辑信息</el-button>
+        <el-button @click="editing = true">编辑信息</el-button>
       </div>
       <div v-else>
         <el-button @click="resetForm(movie)">取消</el-button>
@@ -379,27 +528,58 @@ async function scrape(tmdbId) {
     </template>
   </el-dialog>
 
-  <ScrapePickerDialog v-model="pickerVisible" :candidates="candidates" :scraping="scraping" @pick="c => scrape(c.tmdb_id)" />
+  <ScrapePickerDialog
+    v-model="pickerVisible"
+    :candidates="candidates"
+    :scraping="scraping"
+    :searching="searching"
+    :looking="looking"
+    @pick="c => scrape(c.tmdb_id)"
+    @search="onManualSearch"
+    @lookup="onLookup"
+  />
+
+  <el-dialog v-model="noteDialogVisible" title="写评价" width="480px" append-to-body>
+    <el-input
+      v-model="noteForm.note"
+      type="textarea"
+      :rows="5"
+      maxlength="1000"
+      show-word-limit
+      placeholder="写下你对这部电影的评价…"
+    />
+    <template #footer>
+      <el-button @click="noteDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="savingNote" @click="saveNote">保存</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
+.movie-dialog :deep(.el-dialog__body) {
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+}
+
 .detail-body {
   display: flex;
-  gap: 24px;
+  gap: 30px;
   min-height: 380px;
 }
 
 .detail-cover {
-  flex: 0 0 220px;
+  flex: 0 0 30%;
+  min-width: 220px;
+  max-width: 360px;
 }
 
 .detail-cover img,
 .no-cover {
-  width: 220px;
+  width: 100%;
   aspect-ratio: 2 / 3;
   object-fit: cover;
-  border-radius: 10px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
 }
 
 .no-cover {
@@ -437,6 +617,29 @@ async function scrape(tmdbId) {
   gap: 12px;
 }
 
+.title-block {
+  min-width: 0;
+}
+
+.orig-title {
+  font-size: 14px;
+  color: #8b93a5;
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.douban-tag {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #52d479;
+  background: rgba(82, 212, 121, 0.1);
+  border: 1px solid rgba(82, 212, 121, 0.35);
+  padding: 2px 10px;
+  border-radius: 20px;
+}
+
 .head-actions {
   display: flex;
   gap: 8px;
@@ -445,7 +648,7 @@ async function scrape(tmdbId) {
 
 .head-row h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 26px;
   line-height: 1.4;
 }
 
@@ -471,8 +674,91 @@ async function scrape(tmdbId) {
   font-weight: 700;
 }
 
+.rating-history {
+  margin: 6px 0;
+  border: 1px solid #232b3b;
+  border-radius: 8px;
+  padding: 8px 12px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.rh-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.rh-title {
+  font-size: 12px;
+  color: #8b93a5;
+  font-weight: 600;
+}
+
+.rh-empty {
+  font-size: 12px;
+  color: #6b7385;
+  text-align: center;
+  padding: 8px 0;
+}
+
+.rh-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid #1a2230;
+}
+
+.rh-item:first-of-type {
+  border-top: none;
+}
+
+.rh-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.rh-main {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.rh-rating {
+  color: #6fe3c1;
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.rh-time {
+  font-size: 12px;
+  color: #6b7385;
+}
+
+.rh-note {
+  font-size: 12px;
+  color: #c0c7d4;
+  line-height: 1.6;
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.rh-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+}
+
 .score.tmdb {
   color: #ffc24a;
+}
+
+.score.douban {
+  color: #52d479;
 }
 
 .my-rate {
@@ -523,7 +809,7 @@ async function scrape(tmdbId) {
 .synopsis {
   flex: 1;
   overflow-y: auto;
-  max-height: 200px;
+  max-height: 300px;
   margin: 8px 0;
   line-height: 1.8;
   font-size: 14px;

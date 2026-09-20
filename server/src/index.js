@@ -4,13 +4,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { exec } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { COVERS_DIR, db } from './db.js'
+import { COVERS_DIR, PERSONS_DIR, db } from './db.js'
 import { movieRouter } from './routes/movies.js'
 import { tagRouter } from './routes/tags.js'
 import { scanRouter } from './routes/scan.js'
 import { metaRouter } from './routes/meta.js'
 import { scrapeRouter } from './routes/scrape.js'
 import { settingsRouter } from './routes/settings.js'
+import { playerRouter } from './routes/player.js'
+import { personRouter } from './routes/person.js'
+import { doubanRouter } from './routes/douban.js'
 import { scanAll, addDefaultMoviePaths } from './scanner.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -26,13 +29,17 @@ app.use('/api/scan', scanRouter)
 app.use('/api/meta', metaRouter)
 app.use('/api/scrape', scrapeRouter)
 app.use('/api/settings', settingsRouter)
+app.use('/api/player', playerRouter)
+app.use('/api/person', personRouter)
+app.use('/api/douban', doubanRouter)
 app.use('/covers', express.static(COVERS_DIR))
+app.use('/persons', express.static(PERSONS_DIR))
 
 const distDir = path.resolve(__dirname, '../../web/dist')
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir))
   app.use((req, res, next) => {
-    if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path.startsWith('/covers/')) return next()
+    if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path.startsWith('/covers/') || req.path.startsWith('/persons/')) return next()
     res.sendFile(path.join(distDir, 'index.html'))
   })
 }

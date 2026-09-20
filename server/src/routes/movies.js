@@ -2,6 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import { db } from '../db.js'
 import { saveCoverBuffer, removeCoverFile } from '../covers.js'
+import { playFile } from '../player.js'
 
 export const movieRouter = Router()
 
@@ -21,6 +22,7 @@ const SORTS = {
   year: 'year',
   rating: 'rating',
   my_rating: 'my_rating',
+  douban_rank: 'douban_rank IS NULL, douban_rank',
   file_size: 'file_size',
   created_at: 'created_at',
   updated_at: 'updated_at'
@@ -118,6 +120,20 @@ movieRouter.get('/', (req, res) => {
       params.push(`%"${escapeLike(val)}"%`)
     }
   }
+  if (q.director) {
+    const val = String(q.director).trim()
+    if (val) {
+      where.push("director LIKE ? ESCAPE '\\'")
+      params.push(`%${escapeLike(val)}%`)
+    }
+  }
+  if (q.actor) {
+    const val = String(q.actor).trim()
+    if (val) {
+      where.push("actors LIKE ? ESCAPE '\\'")
+      params.push(`%"${escapeLike(val)}"%`)
+    }
+  }
   if (q.year) {
     const year = Number(q.year)
     if (Number.isInteger(year)) {
@@ -143,6 +159,7 @@ movieRouter.get('/', (req, res) => {
     }
   }
   if (q.unrated === 'true' || q.unrated === '1') where.push('my_rating IS NULL')
+  if (q.top250 === 'true' || q.top250 === '1') where.push('douban_rank IS NOT NULL')
 
   const tagNames = String(q.tags || q.tag || '').split(',').map(s => s.trim()).filter(Boolean)
   if (tagNames.length) {
@@ -153,7 +170,7 @@ movieRouter.get('/', (req, res) => {
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const total = db.prepare(`SELECT COUNT(*) AS c FROM movie ${whereSql}`).get(...params).c
 
-  const sort = SORTS[q.sort] ? q.sort : 'created_at'
+  const sort = SORTS[q.sort] ? q.sort : 'rating'
   const dir = q.order === 'asc' ? 'ASC' : q.order === 'desc' ? 'DESC' : (sort === 'title' ? 'ASC' : 'DESC')
   const page = Math.max(1, parseInt(q.page) || 1)
   const pageSize = Math.min(200, Math.max(1, parseInt(q.page_size) || 50))
@@ -190,6 +207,10 @@ movieRouter.put('/:id', (req, res) => {
     if (!title) return res.status(400).json({ error: '标题不能为空' })
     sets.push('title = ?')
     params.push(title)
+  }
+  if ('original_title' in b) {
+    sets.push('original_title = ?')
+    params.push(String(b.original_title ?? '').trim())
   }
   if ('year' in b) {
     if (b.year === null || b.year === '') {
@@ -237,6 +258,7 @@ movieRouter.put('/:id', (req, res) => {
       params.push(rating)
     }
   }
+  let newMyRating
   if ('my_rating' in b) {
     if (b.my_rating === null || b.my_rating === '') {
       sets.push('my_rating = ?')
@@ -246,6 +268,7 @@ movieRouter.put('/:id', (req, res) => {
       if (!Number.isFinite(myRating) || myRating < 0 || myRating > 10) {
         return res.status(400).json({ error: '我的评分需在 0-10 之间' })
       }
+      newMyRating = myRating
       sets.push('my_rating = ?')
       params.push(myRating)
     }
@@ -267,11 +290,15 @@ movieRouter.put('/:id', (req, res) => {
     params.push(wc)
   }
 
+  const oldRow = db.prepare('SELECT my_rating FROM movie WHERE id = ?').get(id)
   try {
     db.exec('BEGIN IMMEDIATE')
     if (sets.length) {
       sets.push("updated_at = datetime('now')")
       db.prepare(`UPDATE movie SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
+    }
+    if (newMyRating !== undefined && newMyRating !== null && oldRow?.my_rating !== newMyRating) {
+      db.prepare('INSERT INTO rating_history (movie_id, rating) VALUES (?, ?)').run(id, newMyRating)
     }
     if (Array.isArray(b.tags)) syncTags(id, b.tags)
     db.exec('COMMIT')
@@ -323,4 +350,47 @@ movieRouter.post('/:id/watch', (req, res) => {
   db.prepare("UPDATE movie SET watch_count = watch_count + 1, watched = 1, updated_at = datetime('now') WHERE id = ?").run(id)
   const updated = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
   res.json(attachTags([updated])[0])
+})
+
+movieRouter.post('/:id/play', (req, res) => {
+  const id = parseId(req.params.id)
+  if (!id) return res.status(400).json({ error: '无效的 ID' })
+  const row = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
+  if (!row) return res.status(404).json({ error: '电影不存在' })
+  if (row.missing) return res.status(400).json({ error: '该电影文件已缺失，无法播放' })
+  try {
+    playFile(row.video_file)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message })
+  }
+})
+
+movieRouter.get('/:id/ratings', (req, res) => {
+  const id = parseId(req.params.id)
+  if (!id) return res.status(400).json({ error: '无效的 ID' })
+  const items = db.prepare(
+    'SELECT * FROM rating_history WHERE movie_id = ? ORDER BY created_at DESC, id DESC'
+  ).all(id)
+  res.json({ items })
+})
+
+movieRouter.put('/:id/ratings/:rid', (req, res) => {
+  const id = parseId(req.params.id)
+  const rid = parseId(req.params.rid)
+  if (!id || !rid) return res.status(400).json({ error: '无效的 ID' })
+  const row = db.prepare('SELECT * FROM rating_history WHERE id = ? AND movie_id = ?').get(rid, id)
+  if (!row) return res.status(404).json({ error: '评分记录不存在' })
+  const note = String(req.body?.note ?? '').trim()
+  db.prepare('UPDATE rating_history SET note = ? WHERE id = ?').run(note, rid)
+  res.json({ ...row, note })
+})
+
+movieRouter.delete('/:id/ratings/:rid', (req, res) => {
+  const id = parseId(req.params.id)
+  const rid = parseId(req.params.rid)
+  if (!id || !rid) return res.status(400).json({ error: '无效的 ID' })
+  const r = db.prepare('DELETE FROM rating_history WHERE id = ? AND movie_id = ?').run(rid, id)
+  if (!r.changes) return res.status(404).json({ error: '评分记录不存在' })
+  res.json({ ok: true })
 })

@@ -49,6 +49,11 @@ scanRouter.post('/', (req, res) => {
   res.json({ started: true })
 })
 
+scanRouter.delete('/missing', (req, res) => {
+  const r = db.prepare('DELETE FROM movie WHERE missing = 1').run()
+  res.json({ removed: Number(r.changes) })
+})
+
 scanRouter.get('/status', (req, res) => {
   res.json(getScanState())
 })

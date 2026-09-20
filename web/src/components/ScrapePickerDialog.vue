@@ -1,18 +1,66 @@
 <script setup>
+import { ref } from 'vue'
+
 defineProps({
   candidates: { type: Array, default: () => [] },
-  scraping: Boolean
+  scraping: Boolean,
+  searching: Boolean,
+  looking: Boolean
 })
 
 const visible = defineModel({ type: Boolean, default: false })
 
-defineEmits(['pick'])
+const emit = defineEmits(['pick', 'search', 'lookup'])
+
+const query = ref('')
+const year = ref(null)
+const imdbId = ref('')
+
+function doSearch() {
+  const q = query.value.trim()
+  if (!q) return
+  emit('search', { query: q, year: year.value })
+}
+
+function doLookup() {
+  const id = imdbId.value.trim()
+  if (!id) return
+  emit('lookup', id)
+}
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="选择 TMDB 匹配结果" width="600px" append-to-body>
+  <el-dialog v-model="visible" title="选择 TMDB 匹配结果" width="640px" append-to-body>
     <div v-loading="scraping">
-      <el-empty v-if="!candidates.length" description="TMDB 未找到匹配结果，可在编辑中修改标题后重试" />
+      <div class="search-row">
+        <el-input
+          v-model="query"
+          placeholder="中文搜不到？用英文名 / 原片名搜索 TMDB"
+          clearable
+          @keyup.enter="doSearch"
+        />
+        <el-input-number
+          v-model="year"
+          :min="1888"
+          :max="2100"
+          :value-on-clear="null"
+          controls-position="right"
+          placeholder="年份"
+          class="year-input"
+        />
+        <el-button type="primary" :loading="searching" @click="doSearch">搜索</el-button>
+      </div>
+      <div class="imdb-row">
+        <el-input
+          v-model="imdbId"
+          placeholder="或按 IMDb ID 精确匹配（豆瓣 / 维基可查到），例如 tt1375666"
+          clearable
+          @keyup.enter="doLookup"
+        />
+        <el-button :loading="looking" @click="doLookup">匹配</el-button>
+      </div>
+      <el-divider v-if="candidates.length || !searching" />
+      <el-empty v-if="!candidates.length" description="没有匹配结果，试试上方按英文名 / 原名搜索，或用 IMDb ID 精确匹配" />
       <div v-else class="cand-list">
         <div v-for="c in candidates" :key="c.tmdb_id" class="cand" @click="$emit('pick', c)">
           <img v-if="c.poster_url" :src="c.poster_url" loading="lazy" alt="" />
@@ -35,6 +83,24 @@ defineEmits(['pick'])
 </template>
 
 <style scoped>
+.search-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.year-input {
+  width: 110px;
+  flex-shrink: 0;
+}
+
+.imdb-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
 .cand-list {
   display: flex;
   flex-direction: column;

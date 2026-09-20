@@ -3,6 +3,7 @@ import { db } from '../db.js'
 import * as tmdb from '../tmdb.js'
 import { saveCoverBuffer, removeCoverFile } from '../covers.js'
 import { attachTags } from './movies.js'
+import { updateDoubanRanks } from '../douban.js'
 
 export const scrapeRouter = Router()
 
@@ -14,6 +15,15 @@ const batchState = {
 function parseId(raw) {
   const id = Number(raw)
   return Number.isInteger(id) && id > 0 ? id : null
+}
+
+function hasCJK(s) {
+  return /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(s)
+}
+
+function extractLatin(title) {
+  const m = String(title || '').match(/[A-Za-z0-9][A-Za-z0-9 .'&:()-]*/)
+  return m ? m[0].trim() : null
 }
 
 function toCandidate(r) {
@@ -32,6 +42,7 @@ function normalizeDetails(m) {
   return {
     tmdb_id: m.id,
     title: m.title || m.original_title || '',
+    original_title: m.original_title || '',
     year: m.release_date ? Number(m.release_date.slice(0, 4)) : null,
     synopsis: m.overview || '',
     rating: m.vote_average > 0 ? Math.round(m.vote_average * 10) / 10 : null,
@@ -77,7 +88,7 @@ async function applyTmdbToMovie(movieId, m) {
   if (newCover) removeCoverFile(movie.cover)
   db.prepare(`
     UPDATE movie SET title = ?, year = ?, synopsis = ?, director = ?, actors = ?, category = ?,
-      rating = ?, cover = ?, tmdb_id = ?, updated_at = datetime('now')
+      rating = ?, cover = ?, tmdb_id = ?, original_title = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(
     m.title || movie.title,
@@ -89,8 +100,11 @@ async function applyTmdbToMovie(movieId, m) {
     m.rating,
     newCover || movie.cover,
     m.tmdb_id,
+    m.original_title || movie.original_title || '',
     movieId
   )
+  // 标题/年份可能变化，重新匹配豆瓣 Top 250
+  try { updateDoubanRanks() } catch {}
   return db.prepare('SELECT * FROM movie WHERE id = ?').get(movieId)
 }
 
@@ -99,14 +113,27 @@ async function runBatch(movies) {
     for (const m of movies) {
       batchState.current = m.title
       try {
-        const results = await tmdb.searchMovies(m.title)
-        const { confident } = scoreCandidates(m, results.map(toCandidate))
-        if (confident) {
-          const raw = await tmdb.getMovieDetails(confident.tmdb_id)
-          await applyTmdbToMovie(m.id, normalizeDetails(raw))
-          batchState.applied++
+        if (m.tmdb_id) {
+          // 已有 tmdb_id 的电影只补英文原名，不改动其它字段（避免覆盖用户手动编辑）
+          const raw = await tmdb.getMovieDetails(m.tmdb_id)
+          if (raw.original_title) {
+            db.prepare(
+              "UPDATE movie SET original_title = ?, updated_at = datetime('now') WHERE id = ? AND original_title = ''"
+            ).run(raw.original_title, m.id)
+            batchState.applied++
+          } else {
+            batchState.skipped++
+          }
         } else {
-          batchState.skipped++
+          const results = await tmdb.searchMovies(m.title)
+          const { confident } = scoreCandidates(m, results.map(toCandidate))
+          if (confident) {
+            const raw = await tmdb.getMovieDetails(confident.tmdb_id)
+            await applyTmdbToMovie(m.id, normalizeDetails(raw))
+            batchState.applied++
+          } else {
+            batchState.skipped++
+          }
         }
       } catch (err) {
         batchState.failed++
@@ -119,6 +146,8 @@ async function runBatch(movies) {
     batchState.running = false
     batchState.current = null
     batchState.finishedAt = new Date().toISOString()
+    // 批量补全后标题/原名有变化，重新匹配豆瓣 Top 250
+    try { updateDoubanRanks() } catch {}
   }
 }
 
@@ -145,7 +174,10 @@ scrapeRouter.post('/batch', (req, res) => {
   }
   const movies = db.prepare(`
     SELECT * FROM movie
-    WHERE missing = 0 AND tmdb_id IS NULL AND (synopsis = '' OR cover = '' OR year IS NULL OR category = '')
+    WHERE missing = 0 AND (
+      (tmdb_id IS NULL AND (synopsis = '' OR cover = '' OR year IS NULL OR category = ''))
+      OR (tmdb_id IS NOT NULL AND original_title = '')
+    )
     ORDER BY id
   `).all()
   Object.assign(batchState, {
@@ -156,11 +188,33 @@ scrapeRouter.post('/batch', (req, res) => {
   res.json({ started: true, total: movies.length })
 })
 
+scrapeRouter.post('/search', async (req, res) => {
+  const query = String(req.body?.query || '').trim()
+  if (!query) return res.status(400).json({ error: '请输入搜索关键词' })
+  const year = Number(req.body?.year)
+  let results = await tmdb.searchMovies(query, year)
+  if (!results.length && Number.isInteger(year) && year > 0) {
+    results = await tmdb.searchMovies(query)
+  }
+  res.json({ candidates: results.map(toCandidate).slice(0, 20) })
+})
+
 scrapeRouter.post('/:id', async (req, res) => {
   const id = parseId(req.params.id)
   if (!id) return res.status(400).json({ error: '无效的 ID' })
   const movie = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
   if (!movie) return res.status(404).json({ error: '电影不存在' })
+
+  if (req.body?.imdbId) {
+    const imdbId = String(req.body.imdbId).trim().toLowerCase()
+    if (!imdbId) return res.status(400).json({ error: '无效的 IMDb ID' })
+    const found = await tmdb.findByExternalId(imdbId, 'imdb_id')
+    const movieResults = found.movie_results || []
+    if (!movieResults.length) return res.status(404).json({ error: '未找到该 IMDb ID 对应的电影' })
+    const raw = await tmdb.getMovieDetails(movieResults[0].id)
+    const updated = await applyTmdbToMovie(id, normalizeDetails(raw))
+    return res.json({ status: 'applied', movie: attachTags([updated])[0] })
+  }
 
   if (req.body?.tmdbId) {
     const tmdbId = Number(req.body.tmdbId)
@@ -177,5 +231,12 @@ scrapeRouter.post('/:id', async (req, res) => {
     const updated = await applyTmdbToMovie(id, normalizeDetails(raw))
     return res.json({ status: 'applied', movie: attachTags([updated])[0] })
   }
-  res.json({ status: 'candidates', candidates: pool })
+  let candidates = pool
+  if (!candidates.length && hasCJK(movie.title)) {
+    const latin = extractLatin(movie.title)
+    if (latin && latin.length >= 2) {
+      candidates = (await tmdb.searchMovies(latin)).map(toCandidate)
+    }
+  }
+  res.json({ status: 'candidates', candidates })
 })

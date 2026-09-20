@@ -1,12 +1,12 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { Film } from '@element-plus/icons-vue'
+import { Film, CaretRight } from '@element-plus/icons-vue'
 
 const props = defineProps({
   movie: { type: Object, required: true }
 })
 
-defineEmits(['open'])
+defineEmits(['open', 'play'])
 
 const imgError = ref(false)
 watch(() => props.movie.cover_url, () => { imgError.value = false })
@@ -31,8 +31,12 @@ const hue = computed(() => {
         <el-icon :size="34"><Film /></el-icon>
         <span class="ph-title">{{ movie.title }}</span>
       </div>
+      <span v-if="movie.douban_rank" class="douban-badge">Top250 #{{ movie.douban_rank }}</span>
       <span v-if="movie.my_rating != null" class="rating-badge">★ {{ Number(movie.my_rating).toFixed(1) }}</span>
       <div class="overlay">
+        <button v-if="!movie.missing" class="play-btn" title="用 PotPlayer 播放" @click.stop="$emit('play', movie)">
+          <el-icon :size="20"><CaretRight /></el-icon>
+        </button>
         <span class="marks">
           <span v-if="movie.watched" class="watched">✓</span>
           <span v-if="movie.favorite" class="fav">♥</span>
@@ -43,6 +47,10 @@ const hue = computed(() => {
       <div class="title" :title="movie.title">{{ movie.title }}</div>
       <div class="meta">
         {{ movie.year || '—' }}<template v-if="movie.categories?.length"> · {{ movie.categories[0] }}</template>
+      </div>
+      <div class="rates">
+        <span v-if="movie.rating != null" class="tmdb-rate">TMDB {{ Number(movie.rating).toFixed(1) }}</span>
+        <span v-if="movie.douban_rating != null" class="db-rate">豆瓣 {{ Number(movie.douban_rating).toFixed(1) }}</span>
       </div>
     </div>
   </div>
@@ -115,12 +123,26 @@ const hue = computed(() => {
   backdrop-filter: blur(4px);
 }
 
+.douban-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  background: rgba(0, 148, 47, 0.85);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 20px;
+  backdrop-filter: blur(4px);
+}
+
 .overlay {
   position: absolute;
   inset: auto 0 0 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding: 18px 10px 6px;
   background: linear-gradient(transparent, rgba(0,  0, 0, 0.75));
   opacity: 0;
@@ -129,6 +151,26 @@ const hue = computed(() => {
 
 .movie-card:hover .overlay {
   opacity: 1;
+}
+
+.play-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(4px);
+  transition: background 0.2s, transform 0.2s;
+}
+
+.play-btn:hover {
+  background: #4d8ff0;
+  transform: scale(1.1);
 }
 
 .marks {
@@ -164,5 +206,25 @@ const hue = computed(() => {
   margin-top: 2px;
   font-size: 12px;
   color: #8b93a5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rates {
+  margin-top: 2px;
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
+  min-height: 16px;
+  white-space: nowrap;
+}
+
+.tmdb-rate {
+  color: #ffc24a;
+}
+
+.db-rate {
+  color: #52d479;
 }
 </style>

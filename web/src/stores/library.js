@@ -7,13 +7,17 @@ export const useLibraryStore = defineStore('library', {
     movies: [],
     total: 0,
     page: 1,
-    pageSize: 50,
+    pageSize: 18,
     loading: false,
     meta: { categories: [], years: [], tags: [], stats: { total: 0, missing: 0, watched: 0, total_size: 0 } },
+    directors: [],
+    actors: [],
+    directorPhotos: {},
+    actorPhotos: {},
     scanPaths: [],
     scanning: false,
     scanState: null,
-    filters: { q: '', category: '', tags: [], year: null, favorite: false, watched: '', myRating: '', sort: 'created_at', order: 'desc' }
+    filters: { q: '', category: '', tags: [], year: null, favorite: false, watched: '', myRating: '', director: '', actor: '', top250: false, sort: 'rating', order: 'desc' }
   }),
   actions: {
     async fetchMovies() {
@@ -35,6 +39,9 @@ export const useLibraryStore = defineStore('library', {
           const max = f.myRating.slice(dash + 1)
           if (max) params.my_max = max
         }
+        if (f.director) params.director = f.director
+        if (f.actor) params.actor = f.actor
+        if (f.top250) params.top250 = true
         const data = await api.movies(params)
         this.movies = data.items
         this.total = data.total
@@ -48,6 +55,36 @@ export const useLibraryStore = defineStore('library', {
       try {
         this.meta = await api.meta()
       } catch {}
+    },
+    async fetchDirectors() {
+      try {
+        this.directors = (await api.directors()).items
+      } catch {}
+    },
+    async fetchActors() {
+      try {
+        this.actors = (await api.actors()).items
+      } catch {}
+    },
+    async ensurePersonPhotos(mapKey, list) {
+      const map = this[mapKey]
+      const missing = list.filter(x => !map[x.name])
+      if (!missing.length) return
+      const names = missing.map(x => x.name)
+      for (let i = 0; i < names.length; i += 80) {
+        try {
+          const r = await api.personPhotos(names.slice(i, i + 80))
+          for (const item of r.items) {
+            if (item.photo_url) map[item.name] = item.photo_url
+          }
+        } catch {}
+      }
+    },
+    ensureDirectorPhotos() {
+      return this.ensurePersonPhotos('directorPhotos', this.directors)
+    },
+    ensureActorPhotos() {
+      return this.ensurePersonPhotos('actorPhotos', this.actors)
     },
     async fetchScanPaths() {
       try {
