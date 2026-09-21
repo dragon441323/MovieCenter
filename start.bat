@@ -31,9 +31,34 @@ if not exist "server\node_modules" (
 
 where curl >nul 2>nul
 if errorlevel 1 goto run
-curl -s -m 2 http://localhost:9527/api/health 2>nul | find ":true" >nul 2>nul
+
+:: 计算当前磁盘代码的版本指纹（server\src 下最新 .js 的修改时间，Unix 秒）
+set "LOCAL_STAMP="
+for /f "delims=" %%T in ('powershell -NoProfile -Command "$s=0; Get-ChildItem -Recurse -Filter *.js -File 'server\src' | ForEach-Object { if ($_.LastWriteTimeUtc.Ticks -gt $s) { $s=$_.LastWriteTimeUtc.Ticks } }; [math]::Floor(($s - 621355968000000000) / 10000000)" 2^>nul') do set "LOCAL_STAMP=%%T"
+
+:: 服务是否已在运行
+curl -s -m 2 http://localhost:9527/api/health 2>nul > "%TEMP%\mc-health.tmp"
+findstr /C:"true" "%TEMP%\mc-health.tmp" >nul 2>nul
 if errorlevel 1 goto run
-echo [moviecenter] 服务已在运行，直接打开 http://localhost:9527
+
+:: 运行中的服务与磁盘代码是否一致
+set "RUNNING_STAMP="
+if defined LOCAL_STAMP (
+  for /f "delims=" %%V in ('curl -s -m 2 "http://localhost:9527/api/version?plain=1" 2^>nul') do set "RUNNING_STAMP=%%V"
+)
+
+if not defined LOCAL_STAMP goto open_only
+if not defined RUNNING_STAMP goto open_only
+if "%LOCAL_STAMP%"=="%RUNNING_STAMP%" goto open_only
+
+:: 代码已更新：杀掉旧进程换新版本
+echo [moviecenter] 检测到代码已更新（运行中 %RUNNING_STAMP% - 最新 %LOCAL_STAMP%），正在重启服务...
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":9527 .*LISTENING"') do taskkill /PID %%P /F >nul 2>nul
+ping -n 2 127.0.0.1 >nul
+goto run
+
+:open_only
+echo [moviecenter] 服务已在运行且为最新代码，直接打开 http://localhost:9527
 start "" http://localhost:9527
 ping -n 3 127.0.0.1 >nul
 exit /b 0

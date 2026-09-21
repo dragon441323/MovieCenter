@@ -54,7 +54,56 @@ async function collectVideoFiles(dir, depth, out) {
   return out
 }
 
-export async function scanAll() {
+// ---------- 增量扫描：目录签名 ----------
+// 签名 = 目录条目列表的指纹（名字 + 类型 + mtimeMs）。
+// 目录内容有任何增删改名，签名必然变化；签名未变则跳过整棵子树。
+
+function readCacheSig(p) {
+  try {
+    return db.prepare('SELECT sig FROM scan_cache WHERE path = ?').get(p)?.sig || null
+  } catch {
+    return null
+  }
+}
+
+function writeCacheSig(p, sig) {
+  try {
+    db.prepare(
+      'INSERT INTO scan_cache (path, sig) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET sig = excluded.sig'
+    ).run(p, sig)
+  } catch {}
+}
+
+/**
+ * 计算目录签名：只列一层条目（名字/类型/mtime），不递归。
+ * 目录不可读返回 null（视为有变化，走完整扫描）。
+ */
+async function dirSignature(dir) {
+  let entries
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  const parts = []
+  for (const e of entries) {
+    let mtime = 0
+    try {
+      const st = await fs.stat(path.join(dir, e.name))
+      mtime = Math.trunc(st.mtimeMs)
+    } catch {}
+    parts.push(`${e.name}:${e.isDirectory() ? 'd' : 'f'}:${mtime}`)
+  }
+  parts.sort()
+  let h = 2166136261
+  for (const ch of parts.join('|')) {
+    h ^= ch.charCodeAt(0)
+    h = Math.imul(h, 16777619)
+  }
+  return `v1:${(h >>> 0).toString(36)}:${entries.length}`
+}
+
+export async function scanAll(opts = {}) {
   if (scanState.scanning) {
     const err = new Error('扫描正在进行中')
     err.status = 409
@@ -63,10 +112,15 @@ export async function scanAll() {
   scanState.scanning = true
   scanState.startedAt = new Date().toISOString()
   try {
+    const forceFull = !!opts.forceFull
     const roots = db.prepare('SELECT * FROM scan_path WHERE enabled = 1').all()
+    const existing = db.prepare('SELECT id, path, missing, quality FROM movie').all()
+    const existingByPath = new Map(existing.map(m => [m.path.toLowerCase(), m]))
     const found = new Map()
     const scannedRoots = new Set()
     const rootErrors = []
+    let skippedDirs = 0
+    let scannedDirs = 0
 
     for (const root of roots) {
       let entries
@@ -82,7 +136,26 @@ export async function scanAll() {
         const full = path.resolve(root.path, entry.name)
         const key = full.toLowerCase()
         if (found.has(key)) continue
+
+        if (!forceFull) {
+          const cached = readCacheSig(full)
+          if (cached) {
+            const fresh = await dirSignature(full)
+            if (fresh && fresh === cached) {
+              // 目录未变化：直接复用库内记录，跳过整棵子树的遍历
+              const ex = existingByPath.get(key)
+              if (ex && !ex.missing) {
+                skippedDirs++
+                found.set(key, null) // 占位：标记“已知未变化”，DB 更新阶段跳过
+                continue
+              }
+            }
+          }
+        }
+
         const videos = await collectVideoFiles(full, 1, [])
+        scannedDirs++
+        writeCacheSig(full, (await dirSignature(full)) || '')
         if (!videos.length) continue
         videos.sort((a, b) => b.size - a.size)
         found.set(key, {
@@ -95,8 +168,6 @@ export async function scanAll() {
     }
 
     const now = new Date().toISOString()
-    const existing = db.prepare('SELECT id, path, missing, quality FROM movie').all()
-    const existingByPath = new Map(existing.map(m => [m.path.toLowerCase(), m]))
     let added = 0, updated = 0, restored = 0, missingCount = 0
 
     try {
@@ -110,6 +181,7 @@ export async function scanAll() {
       const markMissing = db.prepare('UPDATE movie SET missing = 1, updated_at = ? WHERE id = ?')
 
       for (const [key, info] of found) {
+        if (!info) continue // 未变化目录的占位
         const quality = parseQuality(info.title, info.video_file)
         const ex = existingByPath.get(key)
         if (ex) {
@@ -170,6 +242,8 @@ export async function scanAll() {
       restored,
       missing: missingCount,
       probedQuality,
+      incremental: skippedDirs,
+      scannedDirs,
       totalMovies: db.prepare('SELECT COUNT(*) AS c FROM movie WHERE missing = 0').get().c
     }
     scanState.lastResult = result
@@ -177,6 +251,10 @@ export async function scanAll() {
   } finally {
     scanState.scanning = false
   }
+}
+
+export function clearScanCache() {
+  try { db.prepare('DELETE FROM scan_cache').run() } catch {}
 }
 
 export async function detectDefaultMoviePaths() {

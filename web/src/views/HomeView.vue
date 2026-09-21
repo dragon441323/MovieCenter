@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
-import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present } from '@element-plus/icons-vue'
+import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present, Notebook, StarFilled } from '@element-plus/icons-vue'
 import { useLibraryStore } from '../stores/library'
 import { api } from '../api'
 import { formatSize } from '../utils'
@@ -114,22 +114,51 @@ onMounted(() => {
       <el-button class="pick-btn" round :loading="picking" @click="pickTonight">
         <el-icon v-if="!picking"><MagicStick /></el-icon>&nbsp;今晚看什么
       </el-button>
-      <el-tooltip content="盲盒放映" placement="bottom">
-        <el-button circle @click="$router.push('/blindbox')">
-          <el-icon><Present /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="统计面板" placement="bottom">
-        <el-button circle @click="$router.push('/stats')">
-          <el-icon><DataAnalysis /></el-icon>
-        </el-button>
-      </el-tooltip>
       <el-tooltip content="扫描目录 / 设置" placement="bottom">
         <el-button circle @click="settingsVisible = true">
           <el-icon><Setting /></el-icon>
         </el-button>
       </el-tooltip>
     </header>
+
+    <!-- 功能导航 -->
+    <nav class="nav-cards">
+      <button class="nav-card" @click="$router.push('/movies')">
+        <span class="nc-icon" style="--c: #e0a458"><el-icon :size="22"><Grid /></el-icon></span>
+        <span class="nc-body">
+          <span class="nc-title">电影库</span>
+          <span class="nc-desc">浏览全部 {{ stats.totals.total }} 部影片</span>
+        </span>
+      </button>
+      <button class="nav-card" @click="$router.push('/blindbox')">
+        <span class="nc-icon" style="--c: #d99a4e"><el-icon :size="22"><Present /></el-icon></span>
+        <span class="nc-body">
+          <span class="nc-title">盲盒放映</span>
+          <span class="nc-desc">随机拆一部，支持按口味</span>
+        </span>
+      </button>
+      <button class="nav-card" @click="$router.push('/wishlist')">
+        <span class="nc-icon" style="--c: #e6c37a"><el-icon :size="22"><StarFilled /></el-icon></span>
+        <span class="nc-body">
+          <span class="nc-title">想看清单</span>
+          <span class="nc-desc">同步豆瓣想看，到手自动对号</span>
+        </span>
+      </button>
+      <button class="nav-card" @click="$router.push('/diary')">
+        <span class="nc-icon" style="--c: #8fd8b4"><el-icon :size="22"><Notebook /></el-icon></span>
+        <span class="nc-body">
+          <span class="nc-title">观影日记</span>
+          <span class="nc-desc">{{ stats.totals.watch_total }} 次观看的时间线</span>
+        </span>
+      </button>
+      <button class="nav-card" @click="$router.push('/stats')">
+        <span class="nc-icon" style="--c: #93c78f"><el-icon :size="22"><DataAnalysis /></el-icon></span>
+        <span class="nc-body">
+          <span class="nc-title">统计面板</span>
+          <span class="nc-desc">观影报告 · 类型 · 排行</span>
+        </span>
+      </button>
+    </nav>
 
     <main class="home-main">
       <!-- 空库引导 -->
@@ -225,13 +254,6 @@ onMounted(() => {
           </button>
         </div>
 
-        <!-- 进入电影库 -->
-        <div class="cta-zone">
-          <el-button type="primary" size="large" round class="cta-btn" @click="$router.push('/movies')">
-            <el-icon><Grid /></el-icon>&nbsp;进入电影库 · 共 {{ stats.totals.total }} 部
-          </el-button>
-        </div>
-
         <!-- 推荐位 -->
         <section v-if="rows.recent_watched.length" class="row-section">
           <div class="sec-head">
@@ -310,6 +332,84 @@ onMounted(() => {
 
 .pick-btn {
   font-weight: 600;
+}
+
+/* ---------- 功能导航卡片 ---------- */
+.nav-cards {
+  display: flex;
+  gap: 12px;
+  padding: 16px 28px 4px;
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
+.nav-card {
+  flex: 1 1 0;
+  min-width: 170px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  background: #1a1511;
+  border: 1px solid #2e241b;
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.nav-card:hover {
+  border-color: color-mix(in srgb, var(--c) 55%, transparent);
+  background: #201a13;
+  transform: translateY(-3px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+
+.nc-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c);
+  background: color-mix(in srgb, var(--c) 13%, transparent);
+}
+
+.nc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nc-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ece3d2;
+  white-space: nowrap;
+}
+
+.nc-desc {
+  font-size: 12px;
+  color: #9a8b74;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1100px) {
+  .nav-cards { flex-wrap: wrap; }
+  .nav-card { flex: 1 1 30%; min-width: 150px; }
+}
+
+@media (max-width: 700px) {
+  .nav-card { flex: 1 1 100%; }
 }
 
 .home-main {

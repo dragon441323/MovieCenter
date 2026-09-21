@@ -14,7 +14,8 @@ function getSettings() {
     tmdb_api_key: map.tmdb_api_key || '',
     tmdb_language: LANGS.includes(map.tmdb_language) ? map.tmdb_language : 'zh-CN',
     tmdb_proxy: map.tmdb_proxy || '',
-    player_path: map.player_path || ''
+    player_path: map.player_path || '',
+    douban_uid: map.douban_uid || ''
   }
 }
 
@@ -47,6 +48,13 @@ settingsRouter.put('/', (req, res) => {
       return res.status(400).json({ error: '播放器路径不存在，请检查后重试' })
     }
     upsert('player_path', p)
+  }
+  if ('douban_uid' in b) {
+    const uid = String(b.douban_uid || '').trim()
+    if (uid && !/^\d{1,20}$/.test(uid)) {
+      return res.status(400).json({ error: '豆瓣 UID 需为纯数字' })
+    }
+    upsert('douban_uid', uid)
   }
   res.json(getSettings())
 })

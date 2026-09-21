@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { FolderOpened, Connection, Monitor } from '@element-plus/icons-vue'
+import { FolderOpened, Connection, Monitor, ArrowDown } from '@element-plus/icons-vue'
 import { useLibraryStore } from '../stores/library'
 import { api } from '../api'
 import DuplicatesDialog from './DuplicatesDialog.vue'
@@ -22,6 +22,7 @@ const proxyUrl = ref('')
 const savingKey = ref(false)
 const hasKey = computed(() => !!apiKey.value.trim())
 const probeAvailable = ref(null)
+const doubanUid = ref('')
 
 const playerPath = ref('')
 const detectingPlayer = ref(false)
@@ -57,6 +58,7 @@ async function loadSettings() {
     proxyUrl.value = s.tmdb_proxy
     playerPath.value = s.player_path
     probeAvailable.value = s.probe_available
+    doubanUid.value = s.douban_uid || ''
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -69,12 +71,14 @@ async function saveSettings(silent = false) {
       tmdb_api_key: apiKey.value.trim(),
       tmdb_language: language.value,
       tmdb_proxy: proxyUrl.value.trim(),
-      player_path: playerPath.value.trim()
+      player_path: playerPath.value.trim(),
+      douban_uid: doubanUid.value.trim()
     })
     apiKey.value = s.tmdb_api_key
     language.value = s.tmdb_language
     proxyUrl.value = s.tmdb_proxy
     playerPath.value = s.player_path
+    doubanUid.value = s.douban_uid || ''
     if (!silent) ElMessage.success('设置已保存')
     return true
   } catch (e) {
@@ -212,6 +216,44 @@ async function removePath(sp) {
 }
 
 const lastResult = computed(() => scanState.value?.lastResult)
+
+async function onScanCommand(cmd) {
+  if (scanning.value) return
+  if (cmd === 'full') {
+    try {
+      await ElMessageBox.confirm(
+        '完整扫描会重新遍历所有目录（含 ffprobe 画质识别），大库可能较慢。继续吗？',
+        '完整扫描',
+        { type: 'info', confirmButtonText: '继续', cancelButtonText: '取消' }
+      )
+    } catch { return }
+    await store.triggerAndAwaitScanFull()
+  } else {
+    await store.triggerAndAwaitScan()
+  }
+}
+
+// NFO 批量导出
+const exportingNfoAll = ref(false)
+
+async function exportNfoAll() {
+  try {
+    await ElMessageBox.confirm(
+      '为库中每部影片在它的文件夹里写入 movie.nfo（Kodi / Emby / Jellyfin 兼容）。已有文件会被覆盖。继续吗？',
+      '批量导出 NFO',
+      { type: 'info', confirmButtonText: '导出', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  exportingNfoAll.value = true
+  try {
+    const r = await api.exportNfoAll()
+    ElMessage.success(`已导出 ${r.written}/${r.total} 部${r.failed ? `，失败 ${r.failed} 部` : ''}`)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    exportingNfoAll.value = false
+  }
+}
 
 const backingUp = ref(false)
 const backupInfo = ref({})
@@ -400,10 +442,21 @@ async function cleanupMissing() {
             </div>
           </div>
           <div class="set-row">
-            <el-button type="primary" :loading="scanning" @click="store.triggerAndAwaitScan()">立即扫描</el-button>
+            <el-dropdown @command="onScanCommand">
+              <el-button type="primary" :loading="scanning">
+                立即扫描<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="increment">快速扫描（跳过未变化目录）</el-dropdown-item>
+                  <el-dropdown-item command="full">完整扫描（重新遍历所有目录）</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <span v-if="scanning" class="hint accent">正在扫描…</span>
             <div v-else-if="lastResult" class="hint">
               上次扫描：新增 {{ lastResult.added }} · 更新 {{ lastResult.updated }} · 缺失 {{ lastResult.missing }} · 共 {{ lastResult.totalMovies }} 部
+              <template v-if="lastResult.incremental != null"> · 跳过未变化目录 {{ lastResult.incremental }}</template>
               <div v-if="lastResult.rootErrors?.length" class="warn">
                 无法访问：{{ lastResult.rootErrors.map(e => e.path).join('、') }}
               </div>
@@ -433,6 +486,10 @@ async function cleanupMissing() {
           <div class="set-row">
             <el-button @click="duplicatesVisible = true">重复电影检测</el-button>
             <span class="hint">查找多个硬盘上的同名影片，便于清理空间</span>
+          </div>
+          <div class="set-row">
+            <el-button :loading="exportingNfoAll" @click="exportNfoAll">批量导出 NFO</el-button>
+            <span class="hint">在每部影片的文件夹写入 movie.nfo，供 Kodi / Emby / Jellyfin 读取</span>
           </div>
         </div>
       </el-tab-pane>
@@ -511,7 +568,18 @@ async function cleanupMissing() {
         </div>
 
         <div class="block">
-          <div class="block-title">豆瓣（评分 · Top 250）</div>
+          <div class="block-title">豆瓣（评分 · Top 250 · 片单同步）</div>
+          <div class="set-row">
+            <span class="row-label">我的 UID</span>
+            <el-input
+              v-model="doubanUid"
+              class="grow"
+              placeholder="豆瓣个人主页 people/ 后的数字，如 183262992"
+              clearable
+              @change="() => saveSettings(true)"
+            />
+            <span class="hint" v-if="doubanUid">已保存，可在「想看清单」页一键同步片单</span>
+          </div>
           <div class="set-row">
             <el-button :loading="doubanRefreshing" @click="refreshDouban">刷新榜单</el-button>
             <span class="hint">

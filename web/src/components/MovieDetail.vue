@@ -1,7 +1,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Star, StarFilled, Film, CircleCheck, CircleCheckFilled, Plus, CaretRight } from '@element-plus/icons-vue'
+import { Star, StarFilled, Film, CircleCheck, CircleCheckFilled, Plus, CaretRight, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatSize } from '../utils'
 import { useLibraryStore } from '../stores/library'
@@ -152,10 +152,6 @@ async function loadRatings() {
   }
 }
 
-watch(() => props.movie?.id, id => {
-  if (id) loadRatings()
-})
-
 function openNoteDialog(r) {
   noteForm.id = r.id
   noteForm.note = r.note || ''
@@ -273,6 +269,61 @@ const candidates = ref([])
 const collectionVisible = ref(false)
 const searching = ref(false)
 const looking = ref(false)
+
+// 相似推荐
+const similar = ref([])
+const similarLoading = ref(false)
+
+async function loadSimilar() {
+  if (!props.movie?.id) return
+  similarLoading.value = true
+  try {
+    const r = await api.similarMovies(props.movie.id)
+    similar.value = r.items || []
+  } catch {
+    similar.value = []
+  } finally {
+    similarLoading.value = false
+  }
+}
+
+watch(() => props.movie?.id, id => {
+  if (id) {
+    loadSimilar()
+    loadRatings()
+  }
+})
+
+// 画质重识别
+const reprobing = ref(false)
+
+async function reprobeQuality() {
+  reprobing.value = true
+  try {
+    const updated = await api.reprobeQuality(props.movie.id)
+    ElMessage.success(`画质已更新为 ${updated.quality || '未知'}`)
+    emit('updated', updated)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    reprobing.value = false
+  }
+}
+
+// NFO 导出
+const exportingNfo = ref(false)
+
+async function exportNfo() {
+  exportingNfo.value = true
+  try {
+    const r = await api.exportNfo(props.movie.id)
+    ElMessage.success(`NFO 已导出到影片文件夹`)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    exportingNfo.value = false
+  }
+}
 
 async function scrape(tmdbId) {
   scraping.value = true
@@ -433,7 +484,24 @@ async function onLookup(imdbId) {
             </dd>
           </div>
           <div class="fact"><dt>国家</dt><dd>{{ movie.countries?.length ? movie.countries.join(' / ') : '—' }}</dd></div>
-          <div class="fact"><dt>画质</dt><dd>{{ movie.quality || '—' }}</dd></div>
+          <div class="fact">
+            <dt>画质</dt>
+            <dd class="quality-dd">
+              {{ movie.quality || '—' }}
+              <el-tooltip content="用 ffprobe 读取视频真实分辨率" placement="top">
+                <el-button
+                  size="small"
+                  circle
+                  plain
+                  title="重新识别画质"
+                  :loading="reprobing"
+                  @click="reprobeQuality"
+                >
+                  <el-icon v-if="!reprobing"><Refresh /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </dd>
+          </div>
           <div class="fact">
             <dt>观看</dt>
             <dd class="watch-dd">
@@ -445,6 +513,20 @@ async function onLookup(imdbId) {
           </div>
         </dl>
         <p class="synopsis">{{ movie.synopsis || '暂无简介' }}</p>
+
+        <!-- 相似推荐 -->
+        <div v-if="similarLoading || similar.length" class="similar">
+          <div class="sim-head">喜欢这部的人还看了</div>
+          <div class="sim-list">
+            <div v-for="s in similar" :key="s.id" class="sim-item" @click="emit('open-movie', s.id)">
+              <img v-if="s.cover_url" :src="s.cover_url" loading="lazy" alt="" />
+              <div v-else class="sim-ph">{{ s.title }}</div>
+              <div class="sim-title" :title="s.title">{{ s.title }}</div>
+              <div v-if="s.similarity" class="sim-score">匹配 {{ Math.round(s.similarity * 10) / 10 }}</div>
+            </div>
+          </div>
+        </div>
+
         <div class="fileinfo">
           <div class="filename" :title="movie.video_file">{{ videoName }}</div>
           <div>{{ formatSize(movie.file_size) }} · {{ movie.path }}</div>
@@ -579,6 +661,9 @@ async function onLookup(imdbId) {
         <el-button v-if="!movie.missing" type="primary" @click="play">立即播放</el-button>
         <el-button :loading="scraping" @click="scrape()">TMDB 同步</el-button>
         <el-button @click="editing = true">编辑信息</el-button>
+        <el-tooltip content="导出 movie.nfo 到影片文件夹（Kodi/Emby/Jellyfin 兼容）" placement="top">
+          <el-button :loading="exportingNfo" @click="exportNfo">NFO</el-button>
+        </el-tooltip>
       </div>
       <div v-else>
         <el-button @click="resetForm(movie)">取消</el-button>
@@ -624,6 +709,79 @@ async function onLookup(imdbId) {
 .movie-dialog :deep(.el-dialog) {
   border-radius: 10px;
   border: 1px solid #2e241b;
+}
+
+/* ---------- 相似推荐 ---------- */
+.similar { margin-top: 4px; }
+
+.sim-head {
+  font-size: 13px;
+  font-weight: 700;
+  color: #cfc2ac;
+  margin-bottom: 10px;
+}
+
+.sim-list {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.sim-item {
+  flex-shrink: 0;
+  width: 84px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.sim-item img {
+  width: 84px;
+  height: 126px;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.sim-item:hover img {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(224, 164, 88, 0.5);
+}
+
+.sim-ph {
+  width: 84px;
+  height: 126px;
+  border-radius: 6px;
+  background: #221b14;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(236, 227, 210, 0.45);
+  box-sizing: border-box;
+}
+
+.sim-title {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #ece3d2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sim-score {
+  font-size: 11px;
+  color: #9a8b74;
+}
+
+.quality-dd {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .movie-dialog :deep(.el-dialog__body) {

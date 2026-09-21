@@ -168,3 +168,69 @@ if (missingQuality.length) {
   }
   db.exec('COMMIT')
 }
+
+// ---------- 观影日记 ----------
+// 每次观看记录一行（含历史种子），用于时间线与年度报告
+db.exec(`
+  CREATE TABLE IF NOT EXISTS watch_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    movie_id INTEGER NOT NULL REFERENCES movie(id) ON DELETE CASCADE,
+    watched_at TEXT NOT NULL,
+    rating REAL,
+    note TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'watch',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_watch_log_movie ON watch_log(movie_id, watched_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_watch_log_time ON watch_log(watched_at DESC);
+`)
+
+// 历史观看记录迁移为日记条目（仅首次运行一次）
+const diarySeeded = db.prepare("SELECT value FROM settings WHERE \"key\" = 'watch_log_seeded'").get()
+if (!diarySeeded) {
+  const rows = db.prepare('SELECT id, last_watched_at, updated_at, my_rating FROM movie WHERE watched = 1').all()
+  if (rows.length) {
+    const ins = db.prepare(
+      'INSERT INTO watch_log (movie_id, watched_at, rating, note, source, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    )
+    db.exec('BEGIN')
+    for (const r of rows) {
+      const at = r.last_watched_at
+        || (r.updated_at ? r.updated_at.replace(' ', 'T').replace(/Z+$/, '') + 'Z' : null)
+      if (!at) continue
+      ins.run(r.id, at, r.my_rating ?? null, '历史观看记录导入', 'seed', at)
+    }
+    db.exec('COMMIT')
+  }
+  db.prepare("INSERT INTO settings (\"key\", value) VALUES ('watch_log_seeded', '1') ON CONFLICT(\"key\") DO NOTHING").run()
+}
+
+// ---------- 想看清单 ----------
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wishlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    original_title TEXT NOT NULL DEFAULT '',
+    year INTEGER,
+    douban_id TEXT,
+    tmdb_id INTEGER,
+    poster TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'wanted',
+    movie_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_wishlist_status ON wishlist(status);
+  CREATE INDEX IF NOT EXISTS idx_wishlist_douban ON wishlist(douban_id);
+`)
+
+const wishlistCols = db.prepare('PRAGMA table_info(wishlist)').all().map(c => c.name)
+if (!wishlistCols.includes('douban_rating')) db.exec('ALTER TABLE wishlist ADD COLUMN douban_rating REAL')
+
+// ---------- 增量扫描缓存（目录签名） ----------
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scan_cache (
+    path TEXT PRIMARY KEY COLLATE NOCASE,
+    sig TEXT NOT NULL
+  );
+`)

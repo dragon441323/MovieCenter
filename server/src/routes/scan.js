@@ -2,7 +2,7 @@ import { Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import { db } from '../db.js'
-import { scanAll, getScanState, addDefaultMoviePaths } from '../scanner.js'
+import { scanAll, getScanState, addDefaultMoviePaths, clearScanCache } from '../scanner.js'
 
 export const scanRouter = Router()
 
@@ -45,8 +45,10 @@ scanRouter.post('/', (req, res) => {
   if (getScanState().scanning) {
     return res.status(409).json({ error: '扫描正在进行中' })
   }
-  scanAll().catch(err => console.error('[scan] error:', err.message))
-  res.json({ started: true })
+  const forceFull = req.body?.forceFull === true || req.query?.forceFull === '1'
+  if (forceFull) clearScanCache()
+  scanAll({ forceFull }).catch(err => console.error('[scan] error:', err.message))
+  res.json({ started: true, forceFull })
 })
 
 scanRouter.delete('/missing', (req, res) => {

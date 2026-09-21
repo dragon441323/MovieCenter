@@ -12,6 +12,8 @@ export const useLibraryStore = defineStore('library', {
     meta: { categories: [], years: [], tags: [], stats: { total: 0, missing: 0, watched: 0, total_size: 0 } },
     directors: [],
     actors: [],
+    directorsTotal: 0,
+    actorsTotal: 0,
     directorPhotos: {},
     actorPhotos: {},
     scanPaths: [],
@@ -80,14 +82,18 @@ export const useLibraryStore = defineStore('library', {
         this.meta = await api.meta()
       } catch {}
     },
-    async fetchDirectors() {
+    async fetchDirectors(params = {}) {
       try {
-        this.directors = (await api.directors()).items
+        const r = await api.directors(params)
+        this.directors = r.items
+        this.directorsTotal = r.total ?? r.items.length
       } catch {}
     },
-    async fetchActors() {
+    async fetchActors(params = {}) {
       try {
-        this.actors = (await api.actors()).items
+        const r = await api.actors(params)
+        this.actors = r.items
+        this.actorsTotal = r.total ?? r.items.length
       } catch {}
     },
     async ensurePersonPhotos(mapKey, list) {
@@ -130,6 +136,28 @@ export const useLibraryStore = defineStore('library', {
       try {
         try {
           await api.triggerScan()
+        } catch (e) {
+          if (!e.message.includes('进行中')) throw e
+        }
+        while (true) {
+          await new Promise(r => setTimeout(r, 1200))
+          const st = await api.scanStatus()
+          this.scanState = st
+          if (!st.scanning && st.lastResult) break
+        }
+        await Promise.all([this.fetchMovies(), this.fetchMeta(), this.fetchRows()])
+      } catch (e) {
+        ElMessage.error(e.message)
+      } finally {
+        this.scanning = false
+      }
+    },
+    async triggerAndAwaitScanFull() {
+      if (this.scanning) return
+      this.scanning = true
+      try {
+        try {
+          await api.triggerScanFull()
         } catch (e) {
           if (!e.message.includes('进行中')) throw e
         }

@@ -470,17 +470,22 @@ movieRouter.delete('/:id/cover', (req, res) => {
 movieRouter.post('/:id/watch', (req, res) => {
   const id = parseId(req.params.id)
   if (!id) return res.status(400).json({ error: '无效的 ID' })
-  if (!db.prepare('SELECT id FROM movie WHERE id = ?').get(id)) {
-    return res.status(404).json({ error: '电影不存在' })
-  }
+  const row = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
+  if (!row) return res.status(404).json({ error: '电影不存在' })
+  const now = new Date().toISOString()
   db.prepare(`
     UPDATE movie SET watch_count = watch_count + 1, watched = 1, last_watched_at = ?,
       updated_at = datetime('now') WHERE id = ?
-  `).run(new Date().toISOString(), id)
+  `).run(now, id)
+  // 同步写入观影日记（source=watch 表示手动记录）
+  db.prepare(
+    'INSERT INTO watch_log (movie_id, watched_at, rating, note, source) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, now, row.my_rating ?? null, '', 'watch')
   const updated = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
   res.json(attachTags([updated])[0])
 })
 
+// 首选播放器：POST play 时同步记一次观看 + 写日记
 movieRouter.post('/:id/play', (req, res) => {
   const id = parseId(req.params.id)
   if (!id) return res.status(400).json({ error: '无效的 ID' })
@@ -489,10 +494,36 @@ movieRouter.post('/:id/play', (req, res) => {
   if (row.missing) return res.status(400).json({ error: '该电影文件已缺失，无法播放' })
   try {
     playFile(row.video_file)
+    const now = new Date().toISOString()
+    db.prepare(`
+      UPDATE movie SET watch_count = watch_count + 1, watched = 1, last_watched_at = ?,
+        updated_at = datetime('now') WHERE id = ?
+    `).run(now, id)
+    db.prepare(
+      'INSERT INTO watch_log (movie_id, watched_at, rating, note, source) VALUES (?, ?, ?, ?, ?)'
+    ).run(id, now, row.my_rating ?? null, '', 'play')
     res.json({ ok: true })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
   }
+})
+
+// 单片画质重识别（ffprobe 读取真实分辨率，覆盖文件名推断）
+movieRouter.post('/:id/reprobe', async (req, res) => {
+  const id = parseId(req.params.id)
+  if (!id) return res.status(400).json({ error: '无效的 ID' })
+  const row = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
+  if (!row) return res.status(404).json({ error: '电影不存在' })
+  if (row.missing) return res.status(400).json({ error: '文件已缺失，无法识别' })
+  const { probeVideoQuality, ffprobeAvailable } = await import('../probe.js')
+  if (!(await ffprobeAvailable())) {
+    return res.status(400).json({ error: '未检测到 ffprobe，请先安装 FFmpeg 并重启服务' })
+  }
+  const q = await probeVideoQuality(row.video_file)
+  if (!q) return res.status(502).json({ error: 'ffprobe 未能读取该视频的分辨率' })
+  db.prepare("UPDATE movie SET quality = ?, updated_at = datetime('now') WHERE id = ?").run(q, id)
+  const updated = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
+  res.json(attachTags([updated])[0])
 })
 
 movieRouter.get('/:id/ratings', (req, res) => {

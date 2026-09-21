@@ -211,7 +211,140 @@ export async function ensureTop250() {
   }
 }
 
-// ---------- 豆瓣评分同步 ----------
+// ---------- 豆瓣用户片单同步（rexxar 接口，匿名可用） ----------
+
+const INTERESTS_URL = 'https://m.douban.com/rexxar/api/v2/user'
+const SYNC_PAGE_SIZE = 50
+const SYNC_PAGE_DELAY = 1200
+const SYNC_MAX_PAGES = 40 // 单次同步上限 2000 条，足够覆盖想看+已看
+
+/**
+ * 拉取用户某状态的片单一页。
+ * 返回 { total, items: [{ doubanId, title, year, poster, rating, subtype, markedAt }] }
+ */
+async function fetchInterestsPage(uid, status, start) {
+  const url = `${INTERESTS_URL}/${uid}/interests?type=movie&status=${status}&start=${start}&count=${SYNC_PAGE_SIZE}`
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 20000)
+  try {
+    const res = await undiciFetch(url, {
+      headers: { 'user-agent': UA, referer: 'https://m.douban.com/', accept: 'application/json' },
+      signal: controller.signal
+    })
+    if (res.status === 403 || res.status === 429) {
+      const e = new Error('豆瓣暂时拒绝了请求（可能被限流），稍后再试')
+      e.status = 502
+      throw e
+    }
+    if (!res.ok) {
+      const e = new Error(`豆瓣请求失败 (${res.status})`)
+      e.status = 502
+      throw e
+    }
+    const data = await res.json()
+    const items = (data.interests || []).map(i => ({
+      doubanId: String(i.subject?.id || ''),
+      title: String(i.subject?.title || '').trim(),
+      year: Number(i.subject?.year) || null,
+      poster: i.subject?.cover_url || '',
+      rating: i.rating?.value ?? null,
+      subtype: i.subject?.subtype || 'movie',
+      markedAt: i.create_time || ''
+    })).filter(x => x.doubanId && x.title)
+    return { total: Number(data.total) || 0, items }
+  } catch (err) {
+    throw friendlyError(err)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 探测某状态第一页（用于同步前的 UID 有效性验证）。 */
+export async function fetchUserInterestsFirstPage(uid, status) {
+  return fetchInterestsPage(uid, status, 0)
+}
+
+/** 分页拉全量（带页间隔 + 失败重试一次）。 */
+async function fetchAllInterests(uid, status, onPage) {
+  const first = await fetchInterestsPage(uid, status, 0)
+  const all = [...first.items]
+  if (onPage) onPage(1, Math.ceil(first.total / SYNC_PAGE_SIZE), first.items.length)
+  const pages = Math.min(Math.ceil(first.total / SYNC_PAGE_SIZE), SYNC_MAX_PAGES)
+  for (let p = 1; p < pages; p++) {
+    await sleep(SYNC_PAGE_DELAY)
+    let page
+    try {
+      page = await fetchInterestsPage(uid, status, p * SYNC_PAGE_SIZE)
+    } catch (err) {
+      // 单页失败重试一次（再等 5s）
+      await sleep(5000)
+      page = await fetchInterestsPage(uid, status, p * SYNC_PAGE_SIZE)
+    }
+    all.push(...page.items)
+    if (onPage) onPage(p + 1, pages, page.items.length)
+  }
+  return { total: first.total, items: all }
+}
+
+// 同步任务状态（单例：同时只允许一个同步在跑）
+const wishSync = {
+  running: false, phase: '', total: 0, processed: 0,
+  wantedAdded: 0, wantedExisted: 0, watchedMatched: 0,
+  startedAt: null, finishedAt: null, error: null
+}
+
+export function getWishSyncState() {
+  return { ...wishSync }
+}
+
+/**
+ * 同步豆瓣用户片单到本地：
+ * - wish(想看) → wishlist 表（douban_id 优先匹配，带海报/评分）
+ * - done(已看) → 与库内影片对号（标已看 + 回填豆瓣评分 + 写观影日记）
+ * onApply 由路由层注入（wishlist.js 的同步逻辑），便于解耦。
+ */
+export function startWishSync(uid, onApply) {
+  if (wishSync.running) {
+    const err = new Error('豆瓣片单同步正在进行中')
+    err.status = 409
+    throw err
+  }
+  Object.assign(wishSync, {
+    running: true, phase: 'wish', total: 0, processed: 0,
+    wantedAdded: 0, wantedExisted: 0, watchedMatched: 0,
+    startedAt: new Date().toISOString(), finishedAt: null, error: null
+  })
+
+  ;(async () => {
+    // 1. 想看清单（豆瓣 status=mark）
+    const wish = await fetchAllInterests(uid, 'mark', (p, pages, n) => {
+      wishSync.processed += n
+      wishSync.total = pages * SYNC_PAGE_SIZE
+    })
+    const r1 = onApply.applyWishlist(wish.items)
+    wishSync.wantedAdded = r1.added
+    wishSync.wantedExisted = r1.existed
+
+    // 2. 已看片单（豆瓣 status=done）
+    wishSync.phase = 'done'
+    const done = await fetchAllInterests(uid, 'done', (p, pages, n) => {
+      wishSync.processed += n
+    })
+    const r2 = onApply.applyWatched(done.items)
+    wishSync.watchedMatched = r2.matched
+
+    return { wish: wish.total, done: done.total }
+  })().catch(err => {
+    wishSync.error = err.message
+    console.error('[douban-sync] failed:', err.message)
+  }).finally(() => {
+    wishSync.running = false
+    wishSync.phase = ''
+    wishSync.finishedAt = new Date().toISOString()
+  })
+
+  return { started: true }
+}
 
 const ratingSync = {
   running: false, total: 0, processed: 0, applied: 0, skipped: 0, failed: 0,

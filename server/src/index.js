@@ -17,9 +17,14 @@ import { doubanRouter } from './routes/douban.js'
 import { systemRouter } from './routes/system.js'
 import { statsRouter } from './routes/stats.js'
 import { collectionRouter } from './routes/collections.js'
+import { diaryRouter } from './routes/diary.js'
+import { recommendRouter } from './routes/recommend.js'
+import { wishlistRouter } from './routes/wishlist.js'
+import { nfoRouter } from './routes/nfo.js'
 import { scanAll, addDefaultMoviePaths } from './scanner.js'
 import { ffprobeAvailable } from './probe.js'
 import { ensureWeeklyBackup } from './backup.js'
+import { matchWishlistToLibrary } from './wishlist.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 9527
@@ -27,7 +32,35 @@ const PORT = Number(process.env.PORT) || 9527
 const app = express()
 app.use(express.json({ limit: '2mb' }))
 
+// 代码版本指纹：server/src 下所有 .js 文件的最新 mtime（Unix 秒）。
+// start.bat 用它判断运行中的服务是否为最新代码，旧版本自动重启换新。
+function computeCodeStamp() {
+  let latest = 0
+  const walk = dir => {
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) walk(full)
+      else if (e.name.endsWith('.js')) {
+        try {
+          const m = fs.statSync(full).mtimeMs
+          if (m > latest) latest = m
+        } catch {}
+      }
+    }
+  }
+  walk(__dirname)
+  return String(Math.floor(latest / 1000))
+}
+const CODE_STAMP = computeCodeStamp()
+const STARTED_AT = new Date().toISOString()
+
 app.get('/api/health', (req, res) => res.json({ ok: true }))
+app.get('/api/version', (req, res) => {
+  if (req.query.plain !== undefined) return res.type('text/plain').send(CODE_STAMP)
+  res.json({ code: CODE_STAMP, started_at: STARTED_AT, node: process.version })
+})
 app.use('/api/movies', movieRouter)
 app.use('/api/tags', tagRouter)
 app.use('/api/scan', scanRouter)
@@ -40,6 +73,10 @@ app.use('/api/douban', doubanRouter)
 app.use('/api/system', systemRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/collections', collectionRouter)
+app.use('/api/diary', diaryRouter)
+app.use('/api/recommend', recommendRouter)
+app.use('/api/wishlist', wishlistRouter)
+app.use('/api/nfo', nfoRouter)
 app.use('/covers', express.static(COVERS_DIR))
 app.use('/persons', express.static(PERSONS_DIR))
 
@@ -92,6 +129,15 @@ app.listen(PORT, async () => {
     else console.log('[probe] 未检测到 ffprobe，画质仅按文件名识别；安装 FFmpeg 后重启即可自动启用深度识别')
   })
   scanAll()
-    .then(r => console.log('[scan] startup scan done:', JSON.stringify(r)))
+    .then(r => {
+      console.log('[scan] startup scan done:', JSON.stringify(r))
+      // 扫描后把想看清单与新入库影片自动匹配
+      try {
+        const matched = matchWishlistToLibrary()
+        if (matched) console.log(`[wishlist] matched ${matched} wanted items to library`)
+      } catch (err) {
+        console.error('[wishlist] match failed:', err.message)
+      }
+    })
     .catch(err => console.error('[scan] startup scan failed:', err.message))
 })

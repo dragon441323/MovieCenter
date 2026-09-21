@@ -8,7 +8,9 @@ const router = createRouter({
     { path: '/movies', name: 'movies', component: () => import('../views/MoviesView.vue') },
     { path: '/person', name: 'person', component: () => import('../views/PersonDetailView.vue') },
     { path: '/blindbox', name: 'blindbox', component: () => import('../views/BlindBoxView.vue') },
-    { path: '/stats', name: 'stats', component: () => import('../views/StatsView.vue') }
+    { path: '/stats', name: 'stats', component: () => import('../views/StatsView.vue') },
+    { path: '/diary', name: 'diary', component: () => import('../views/DiaryView.vue') },
+    { path: '/wishlist', name: 'wishlist', component: () => import('../views/WishlistView.vue') }
   ],
   scrollBehavior(to, from, saved) {
     return saved || { top: 0 }

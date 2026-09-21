@@ -40,8 +40,8 @@ export const api = {
   removeCover: id => request('DELETE', `/api/movies/${id}/cover`),
   tags: () => request('GET', '/api/tags'),
   meta: () => request('GET', '/api/meta'),
-  directors: () => request('GET', '/api/meta/directors'),
-  actors: () => request('GET', '/api/meta/actors'),
+  directors: (params = {}) => request('GET', '/api/meta/directors?' + toQuery(params)),
+  actors: (params = {}) => request('GET', '/api/meta/actors?' + toQuery(params)),
   personPhotos: names => request('POST', '/api/person/photos', { names }),
   scanPaths: () => request('GET', '/api/scan/paths'),
   detectScanPaths: () => request('POST', '/api/scan/detect'),
@@ -72,5 +72,32 @@ export const api = {
   backupInfo: () => request('GET', '/api/system/backup'),
   backupNow: () => request('POST', '/api/system/backup'),
   autostartStatus: () => request('GET', '/api/system/autostart'),
-  setAutostart: enabled => request('POST', '/api/system/autostart', { enabled })
+  setAutostart: enabled => request('POST', '/api/system/autostart', { enabled }),
+  // 观影日记
+  diary: (params = {}) => request('GET', '/api/diary?' + toQuery(params)),
+  diaryReport: year => request('GET', '/api/diary/report' + (year ? `?year=${year}` : '')),
+  updateDiaryNote: (id, note) => request('PUT', `/api/diary/${id}`, { note }),
+  removeDiary: id => request('DELETE', `/api/diary/${id}`),
+  // 推荐
+  similarMovies: id => request('GET', `/api/recommend/similar/${id}`),
+  tasteProfile: () => request('GET', '/api/recommend/taste'),
+  pickByTaste: () => request('POST', '/api/recommend/pick-by-taste'),
+  // 想看清单
+  wishlist: status => request('GET', '/api/wishlist' + (status ? `?status=${status}` : '')),
+  importWishlist: text => request('POST', '/api/wishlist/import', { text }),
+  matchWishlist: () => request('POST', '/api/wishlist/match'),
+  matchWishlistItem: (id, movieId) => request('POST', `/api/wishlist/${id}/match`, { movie_id: movieId }),
+  enrichWishlist: limit => request('POST', '/api/wishlist/enrich', { limit }),
+  setWishlistStatus: (id, status) => request('PUT', `/api/wishlist/${id}`, { status }),
+  removeWishlistItem: id => request('DELETE', `/api/wishlist/${id}`),
+  doubanWishlistSync: uid => request('POST', '/api/wishlist/sync-douban', uid ? { uid } : {}),
+  doubanWishlistSyncStatus: () => request('GET', '/api/wishlist/sync-douban'),
+  // NFO
+  exportNfo: id => request('POST', `/api/nfo/${id}`),
+  exportNfoAll: () => request('POST', '/api/nfo'),
+  previewNfo: id => request('GET', `/api/nfo/${id}/preview`),
+  // 画质重识别
+  reprobeQuality: id => request('POST', `/api/movies/${id}/reprobe`),
+  // 扫描
+  triggerScanFull: () => request('POST', '/api/scan', { forceFull: true })
 }
