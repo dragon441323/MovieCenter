@@ -1,4 +1,5 @@
 import path from 'node:path'
+import fs from 'node:fs'
 import sharp from 'sharp'
 import { db, PERSONS_DIR } from './db.js'
 import * as tmdb from './tmdb.js'
@@ -16,6 +17,26 @@ async function downloadAndSave(tmdbId, profilePath) {
     .jpeg({ quality: 80 })
     .toFile(path.join(PERSONS_DIR, filename))
   return filename
+}
+
+// 人物页大图（w300），已存在则直接复用
+export async function ensureLargePhoto(tmdbId, profilePath) {
+  if (!tmdbId) return ''
+  const filename = `${tmdbId}_l.jpg`
+  const full = path.join(PERSONS_DIR, filename)
+  if (fs.existsSync(full)) return filename
+  if (!profilePath) return ''
+  try {
+    const buf = await tmdb.downloadImage(profilePath, 'w300')
+    if (!buf || !buf.length) return ''
+    await sharp(buf)
+      .resize({ width: 400, withoutEnlargement: true })
+      .jpeg({ quality: 82 })
+      .toFile(full)
+    return filename
+  } catch {
+    return ''
+  }
 }
 
 export async function resolvePersonPhoto(name) {

@@ -31,16 +31,16 @@ if not exist "server\node_modules" (
 
 where curl >nul 2>nul
 if errorlevel 1 goto run
-curl -s -m 2 http://localhost:3000/api/health 2>nul | find ":true" >nul 2>nul
+curl -s -m 2 http://localhost:9527/api/health 2>nul | find ":true" >nul 2>nul
 if errorlevel 1 goto run
-echo [moviecenter] 服务已在运行，直接打开 http://localhost:3000
-start "" http://localhost:3000
+echo [moviecenter] 服务已在运行，直接打开 http://localhost:9527
+start "" http://localhost:9527
 ping -n 3 127.0.0.1 >nul
 exit /b 0
 
 :run
 echo.
-echo [moviecenter] 正在启动... 浏览器将自动打开 http://localhost:3000
+echo [moviecenter] 正在启动... 浏览器将自动打开 http://localhost:9527
 echo [moviecenter] 关闭本窗口即可停止服务；局域网设备可用下方 LAN 地址访问
 echo.
 set MC_OPEN_BROWSER=1

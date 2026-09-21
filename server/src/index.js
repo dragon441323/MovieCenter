@@ -14,10 +14,15 @@ import { settingsRouter } from './routes/settings.js'
 import { playerRouter } from './routes/player.js'
 import { personRouter } from './routes/person.js'
 import { doubanRouter } from './routes/douban.js'
+import { systemRouter } from './routes/system.js'
+import { statsRouter } from './routes/stats.js'
+import { collectionRouter } from './routes/collections.js'
 import { scanAll, addDefaultMoviePaths } from './scanner.js'
+import { ffprobeAvailable } from './probe.js'
+import { ensureWeeklyBackup } from './backup.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const PORT = Number(process.env.PORT) || 3000
+const PORT = Number(process.env.PORT) || 9527
 
 const app = express()
 app.use(express.json({ limit: '2mb' }))
@@ -32,6 +37,9 @@ app.use('/api/settings', settingsRouter)
 app.use('/api/player', playerRouter)
 app.use('/api/person', personRouter)
 app.use('/api/douban', doubanRouter)
+app.use('/api/system', systemRouter)
+app.use('/api/stats', statsRouter)
+app.use('/api/collections', collectionRouter)
 app.use('/covers', express.static(COVERS_DIR))
 app.use('/persons', express.static(PERSONS_DIR))
 
@@ -78,6 +86,11 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('[moviecenter] auto-detect failed:', err.message)
   }
+  ensureWeeklyBackup()
+  ffprobeAvailable().then(ok => {
+    if (ok) console.log('[probe] ffprobe 已就绪，扫描时将读取视频真实分辨率识别画质')
+    else console.log('[probe] 未检测到 ffprobe，画质仅按文件名识别；安装 FFmpeg 后重启即可自动启用深度识别')
+  })
   scanAll()
     .then(r => console.log('[scan] startup scan done:', JSON.stringify(r)))
     .catch(err => console.error('[scan] startup scan failed:', err.message))

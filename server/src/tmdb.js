@@ -54,7 +54,7 @@ function friendlyError(err) {
   return err
 }
 
-export async function tmdbFetch(pathname, params = {}) {
+export async function tmdbFetch(pathname, params = {}, opts = {}) {
   const { apiKey, language } = getTmdbConfig()
   if (!apiKey) {
     const err = new Error('未配置 TMDB API Key，请先在设置中填写')
@@ -65,7 +65,7 @@ export async function tmdbFetch(pathname, params = {}) {
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
   }
-  url.searchParams.set('language', language)
+  if (!opts.noLanguage) url.searchParams.set('language', language)
   url.searchParams.set('include_adult', 'false')
   const headers = { accept: 'application/json' }
   if (apiKey.startsWith('eyJ')) headers.Authorization = `Bearer ${apiKey}`
@@ -104,6 +104,18 @@ export async function findByExternalId(externalId, externalSource) {
 
 export async function getMovieDetails(tmdbId) {
   return tmdbFetch(`/movie/${tmdbId}`, { append_to_response: 'credits' })
+}
+
+export async function getCollection(collectionId) {
+  return tmdbFetch(`/collection/${collectionId}`)
+}
+
+export async function getPersonDetails(personId, opts = {}) {
+  return tmdbFetch(`/person/${personId}`, {}, opts)
+}
+
+export async function getPersonCredits(personId) {
+  return tmdbFetch(`/person/${personId}/movie_credits`)
 }
 
 export function imageUrl(imagePath, size = 'w500') {

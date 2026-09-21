@@ -1,153 +1,66 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Film, Search, Setting, StarFilled, Refresh, Close } from '@element-plus/icons-vue'
+import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present } from '@element-plus/icons-vue'
 import { useLibraryStore } from '../stores/library'
 import { api } from '../api'
 import { formatSize } from '../utils'
+import Logo from '../components/Logo.vue'
 import MovieCard from '../components/MovieCard.vue'
 import MovieDetail from '../components/MovieDetail.vue'
 import SettingsDialog from '../components/SettingsDialog.vue'
 
 const store = useLibraryStore()
-const { movies, total, page, pageSize, loading, meta, filters, scanPaths, scanning } = storeToRefs(store)
+const router = useRouter()
+const { rows, scanPaths, scanning } = storeToRefs(store)
 
-const searchText = ref('')
-const sortValue = ref(`${filters.value.sort}:${filters.value.order}`)
+const stats = ref({ totals: { total: 0, watched: 0, watch_total: 0, favorites: 0, my_rated: 0, top250: 0, total_size: 0 } })
 const detailVisible = ref(false)
 const detailMovie = ref(null)
 const settingsVisible = ref(false)
-const top250Count = ref(0)
+const picking = ref(false)
+const projectorOn = ref(false)
+const daily = ref(null)
 
-let searchTimer = null
-watch(searchText, v => {
-  clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => store.setFilters({ q: v.trim() }), 350)
+const WEEKS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+const dailyDate = computed(() => {
+  if (!daily.value?.date) return ''
+  const [, m, d] = daily.value.date.split('-')
+  return `${String(m).padStart(2, '0')}.${String(d).padStart(2, '0')}`
 })
+const dailyWeek = computed(() => WEEKS[new Date().getDay()])
 
-const sortOptions = [
-  { label: '最近添加', value: 'created_at:desc' },
-  { label: '标题', value: 'title:asc' },
-  { label: '年份', value: 'year:desc' },
-  { label: 'TMDB 评分', value: 'rating:desc' },
-  { label: '我的评分', value: 'my_rating:desc' },
-  { label: '豆瓣 Top 250', value: 'douban_rank:asc' }
-]
+const featured = computed(() => rows.value.featured || [])
+const hasLibrary = computed(() => stats.value.totals.total > 0)
 
-function onSortChange(v) {
-  const [sort, order] = v.split(':')
-  store.setFilters({ sort, order })
-}
-
-const categoryModel = ref(filters.value.category)
-watch(categoryModel, v => store.setFilters({ category: v || '' }))
-
-const tagsModel = ref([...filters.value.tags])
-watch(tagsModel, v => store.setFilters({ tags: v || [] }))
-
-const yearModel = ref(filters.value.year)
-watch(yearModel, v => store.setFilters({ year: v ?? null }))
-
-const watchedModel = ref(filters.value.watched)
-watch(watchedModel, v => store.setFilters({ watched: v || '' }))
-
-const myRatingModel = ref(filters.value.myRating)
-watch(myRatingModel, v => store.setFilters({ myRating: v || '' }))
-
-// 导演 / 演员浏览视图：'movies' | 'directors' | 'actors'
-const view = ref('movies')
-// 记录从哪个列表进入了电影视图（'directors' | 'actors' | null），用于显示返回键
-const browseFrom = ref(null)
-const directorSearch = ref('')
-const actorSearch = ref('')
-const directorLoading = ref(false)
-const actorLoading = ref(false)
-
-const filteredDirectors = computed(() => {
-  const q = directorSearch.value.trim().toLowerCase()
-  if (!q) return store.directors
-  return store.directors.filter(d => d.name.toLowerCase().includes(q))
-})
-
-const filteredActors = computed(() => {
-  const q = actorSearch.value.trim().toLowerCase()
-  if (!q) return store.actors
-  return store.actors.filter(a => a.name.toLowerCase().includes(q))
-})
-
-async function loadDirectors() {
-  if (!store.directors.length) {
-    directorLoading.value = true
-    await store.fetchDirectors()
-    directorLoading.value = false
-  }
-  directorSearch.value = ''
-  store.ensureDirectorPhotos()
-}
-
-async function loadActors() {
-  if (!store.actors.length) {
-    actorLoading.value = true
-    await store.fetchActors()
-    actorLoading.value = false
-  }
-  actorSearch.value = ''
-  store.ensureActorPhotos()
-}
-
-function toggleDirectors() {
-  if (view.value === 'directors') view.value = 'movies'
-  else {
-    view.value = 'directors'
-    loadDirectors()
-  }
-}
-
-function toggleActors() {
-  if (view.value === 'actors') view.value = 'movies'
-  else {
-    view.value = 'actors'
-    loadActors()
-  }
-}
-
-function backToMovies() {
-  const had = filters.value.director || filters.value.actor
-  view.value = 'movies'
-  browseFrom.value = null
-  if (had) store.setFilters({ director: '', actor: '' })
-}
-
-function selectDirector(name) {
-  store.setFilters({ director: name, actor: '' })
-  view.value = 'movies'
-  browseFrom.value = 'directors'
-}
-
-function selectActor(name) {
-  store.setFilters({ actor: name, director: '' })
-  view.value = 'movies'
-  browseFrom.value = 'actors'
-}
-
-function clearDirector() {
-  store.setFilters({ director: '' })
-  browseFrom.value = null
-}
-
-function clearActor() {
-  store.setFilters({ actor: '' })
-  browseFrom.value = null
-}
-
-function backToBrowseList() {
-  view.value = browseFrom.value === 'actors' ? 'actors' : 'directors'
-}
+const quickStats = computed(() => [
+  { icon: Grid, color: '#e0a458', num: stats.value.totals.total, label: '电影' },
+  { icon: CircleCheck, color: '#9aab6e', num: stats.value.totals.watched, label: '已看' },
+  { icon: VideoPlay, color: '#c97b5a', num: stats.value.totals.watch_total, label: '累计观看' },
+  { icon: Star, color: '#e6c37a', num: stats.value.totals.favorites, label: '收藏' },
+  { icon: Trophy, color: '#93c78f', num: stats.value.totals.top250, label: 'Top 250' },
+  { icon: Coin, color: '#a08d72', num: formatSize(stats.value.totals.total_size), label: '库容量', small: true }
+])
 
 function openDetail(movie) {
   detailMovie.value = movie
   detailVisible.value = true
+}
+
+function goPerson(name) {
+  detailVisible.value = false
+  router.push({ path: '/person', query: { name } })
+}
+
+async function onOpenMovie(id) {
+  try {
+    detailMovie.value = await api.movie(id)
+    detailVisible.value = true
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
 }
 
 async function playMovie(movie) {
@@ -158,23 +71,35 @@ async function playMovie(movie) {
   }
 }
 
+async function pickTonight() {
+  picking.value = true
+  try {
+    const movie = await store.pickTonight()
+    ElMessage({ message: `今晚就看这部！${movie.title}`, type: 'success' })
+    openDetail(movie)
+  } catch (e) {
+    ElMessage.info(e.message)
+  } finally {
+    picking.value = false
+  }
+}
+
 function onUpdated(movie) {
   detailMovie.value = movie
-  const i = store.movies.findIndex(m => m.id === movie.id)
-  if (i >= 0) store.movies[i] = movie
+  store.fetchRows()
   store.fetchMeta()
+  api.stats().then(s => { stats.value = s }).catch(() => {})
 }
 
 onMounted(() => {
-  store.fetchMovies()
+  requestAnimationFrame(() => { projectorOn.value = true })
+  store.fetchRows()
   store.fetchMeta()
   store.fetchScanPaths()
-  // 首次访问自动抓取豆瓣 Top 250 并标记库内上榜电影（完成后刷新列表以显示徽章）
+  api.stats().then(s => { stats.value = s }).catch(() => {})
+  api.dailyMovie().then(r => { daily.value = r.movie }).catch(() => {})
   api.doubanTop250()
-    .then(r => {
-      top250Count.value = r.matched || 0
-      if (r.matched && !store.movies.some(m => m.douban_rank != null)) store.fetchMovies()
-    })
+    .then(() => store.fetchRows())
     .catch(() => {})
 })
 </script>
@@ -183,31 +108,20 @@ onMounted(() => {
   <div class="home">
     <header class="topbar">
       <div class="brand">
-        <el-icon :size="22" color="#4d8ff0"><Film /></el-icon>
+        <Logo class="logo" />
         <span>电影中心</span>
       </div>
-      <el-input
-        v-model="searchText"
-        class="search"
-        placeholder="搜索标题 / 导演 / 演员 / 简介…"
-        clearable
-        :prefix-icon="Search"
-      />
-      <el-select v-model="sortValue" class="sort" @change="onSortChange">
-        <el-option v-for="o in sortOptions" :key="o.value" :label="o.label" :value="o.value" />
-      </el-select>
-      <el-tooltip content="仅看收藏" placement="bottom">
-        <el-button
-          circle
-          :type="filters.favorite ? 'warning' : 'default'"
-          @click="store.setFilters({ favorite: !filters.favorite })"
-        >
-          <el-icon><StarFilled /></el-icon>
+      <el-button class="pick-btn" round :loading="picking" @click="pickTonight">
+        <el-icon v-if="!picking"><MagicStick /></el-icon>&nbsp;今晚看什么
+      </el-button>
+      <el-tooltip content="盲盒放映" placement="bottom">
+        <el-button circle @click="$router.push('/blindbox')">
+          <el-icon><Present /></el-icon>
         </el-button>
       </el-tooltip>
-      <el-tooltip content="立即扫描" placement="bottom">
-        <el-button circle :loading="scanning" @click="store.triggerAndAwaitScan()">
-          <el-icon v-if="!scanning"><Refresh /></el-icon>
+      <el-tooltip content="统计面板" placement="bottom">
+        <el-button circle @click="$router.push('/stats')">
+          <el-icon><DataAnalysis /></el-icon>
         </el-button>
       </el-tooltip>
       <el-tooltip content="扫描目录 / 设置" placement="bottom">
@@ -217,164 +131,141 @@ onMounted(() => {
       </el-tooltip>
     </header>
 
-    <div class="layout">
-      <aside class="sidebar">
-        <div class="sidebar-title">筛选</div>
-        <el-select v-model="categoryModel" filterable clearable placeholder="全部分类" class="sidebar-item" size="large">
-          <el-option v-for="c in meta.categories" :key="c" :label="c" :value="c" />
-        </el-select>
-      <el-select
-        v-model="tagsModel"
-        multiple
-        filterable
-        clearable
-        collapse-tags
-        collapse-tags-tooltip
-        placeholder="标签"
-        class="sidebar-item"
-        size="large"
-      >
-        <el-option v-for="t in meta.tags" :key="t.id" :label="t.name" :value="t.name" />
-      </el-select>
-      <el-select v-model="yearModel" filterable clearable placeholder="全部年份" class="sidebar-item" size="large">
-        <el-option v-for="y in meta.years" :key="y" :label="y" :value="y" />
-      </el-select>
-      <el-select v-model="watchedModel" placeholder="观看状态" class="sidebar-item" size="large">
-        <el-option label="全部状态" value="" />
-        <el-option label="已看" value="watched" />
-        <el-option label="未看" value="unwatched" />
-      </el-select>
-      <el-select v-model="myRatingModel" placeholder="我的评分" class="sidebar-item" size="large">
-        <el-option label="全部评分" value="" />
-        <el-option label="9 ~ 10 分" value="9-10" />
-        <el-option label="8 ~ 8.9 分" value="8-8.9" />
-        <el-option label="7 ~ 7.9 分" value="7-7.9" />
-        <el-option label="6 ~ 6.9 分" value="6-6.9" />
-        <el-option label="6 分以下" value="0-5.9" />
-        <el-option label="未评分" value="none" />
-      </el-select>
-
-      <el-button
-        class="sidebar-btn"
-        size="large"
-        :type="filters.top250 ? 'primary' : 'default'"
-        @click="store.setFilters({ top250: !filters.top250 })"
-      >
-        <span class="btn-label">豆瓣 Top 250{{ top250Count ? `（${top250Count}）` : '' }}</span>
-      </el-button>
-
-      <el-button
-        class="sidebar-btn"
-        size="large"
-        :type="view === 'directors' || filters.director ? 'primary' : 'default'"
-        @click="toggleDirectors"
-      >
-        <span class="btn-label">{{ filters.director ? `导演：${filters.director}` : '导演' }}</span>
-        <el-icon v-if="filters.director" class="clear-icon" @click.stop="clearDirector"><Close /></el-icon>
-      </el-button>
-
-      <el-button
-        class="sidebar-btn"
-        size="large"
-        :type="view === 'actors' || filters.actor ? 'primary' : 'default'"
-        @click="toggleActors"
-      >
-        <span class="btn-label">{{ filters.actor ? `演员：${filters.actor}` : '演员' }}</span>
-        <el-icon v-if="filters.actor" class="clear-icon" @click.stop="clearActor"><Close /></el-icon>
-      </el-button>
-        <div v-if="meta.stats.total" class="stats">
-          共 {{ meta.stats.total }} 部<br />已看 {{ meta.stats.watched }} · {{ formatSize(meta.stats.total_size) }}
-          <span v-if="meta.stats.missing" class="missing"><br />{{ meta.stats.missing }} 部缺失</span>
-        </div>
-      </aside>
-
-    <main v-loading="loading" class="content">
-      <!-- 导演列表视图 -->
-      <div v-if="view === 'directors'" class="person-page">
-        <div class="person-page-header">
-          <el-button link @click="backToMovies"><el-icon><ArrowLeft /></el-icon> 返回电影列表</el-button>
-          <span class="person-page-title">导演 <span class="person-total">（{{ store.directors.length }} 人）</span></span>
-          <el-input v-model="directorSearch" placeholder="搜索导演" clearable size="small" class="person-search" />
-        </div>
-        <div v-loading="directorLoading" class="person-grid">
-          <div v-if="!directorLoading && !filteredDirectors.length" class="person-empty">暂无导演</div>
-          <div
-            v-for="d in filteredDirectors"
-            :key="d.name"
-            class="person-card"
-            :class="{ active: d.name === filters.director }"
-            @click="selectDirector(d.name)"
-          >
-            <img v-if="store.directorPhotos[d.name]" class="person-avatar" :src="store.directorPhotos[d.name]" :alt="d.name" loading="lazy" />
-            <div v-else class="person-avatar fallback">{{ d.name[0] }}</div>
-            <div class="person-name">{{ d.name }}</div>
-            <div class="person-count">{{ d.count }} 部</div>
-          </div>
+    <main class="home-main">
+      <!-- 空库引导 -->
+      <div v-if="!hasLibrary && !scanPaths.length" class="empty-hero">
+        <Logo class="empty-logo" />
+        <h2>把硬盘里的电影搬进你的放映厅</h2>
+        <p>各硬盘根目录下的「电影」文件夹（如 D:\电影）会自动识别入库<br />本地硬盘与 NAS 目录都支持，入库后可一键同步海报和资料</p>
+        <div class="hero-actions">
+          <el-button size="large" @click="settingsVisible = true">添加电影目录</el-button>
+          <el-button type="primary" size="large" :loading="scanning" @click="store.triggerAndAwaitScan()">立即扫描</el-button>
         </div>
       </div>
 
-      <!-- 演员列表视图 -->
-      <div v-else-if="view === 'actors'" class="person-page">
-        <div class="person-page-header">
-          <el-button link @click="backToMovies"><el-icon><ArrowLeft /></el-icon> 返回电影列表</el-button>
-          <span class="person-page-title">演员 <span class="person-total">（{{ store.actors.length }} 人）</span></span>
-          <el-input v-model="actorSearch" placeholder="搜索演员" clearable size="small" class="person-search" />
-        </div>
-        <div v-loading="actorLoading" class="person-grid">
-          <div v-if="!actorLoading && !filteredActors.length" class="person-empty">暂无演员</div>
-          <div
-            v-for="a in filteredActors"
-            :key="a.name"
-            class="person-card"
-            :class="{ active: a.name === filters.actor }"
-            @click="selectActor(a.name)"
-          >
-            <img v-if="store.actorPhotos[a.name]" class="person-avatar" :src="store.actorPhotos[a.name]" :alt="a.name" loading="lazy" />
-            <div v-else class="person-avatar fallback">{{ a.name[0] }}</div>
-            <div class="person-name">{{ a.name }}</div>
-            <div class="person-count">{{ a.count }} 部</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 电影墙视图 -->
       <template v-else>
-        <div v-if="browseFrom" class="browse-back">
-          <el-button link @click="backToBrowseList">
-            <el-icon><ArrowLeft /></el-icon> 返回{{ browseFrom === 'directors' ? '导演' : '演员' }}列表
-          </el-button>
-          <span v-if="filters.director" class="browse-current">导演：{{ filters.director }}</span>
-          <span v-else-if="filters.actor" class="browse-current">演员：{{ filters.actor }}</span>
+        <!-- 银幕：精选轮播 -->
+        <div v-if="featured.length" class="screen" :class="{ on: projectorOn }">
+          <el-carousel height="430px" :interval="6500" arrow="hover" indicator-position="none" trigger="click">
+            <el-carousel-item v-for="m in featured" :key="m.id">
+              <div class="slide" @click="openDetail(m)">
+                <div class="slide-bg" :style="{ backgroundImage: `url(${m.cover_url})` }"></div>
+                <div class="slide-shade"></div>
+                <div class="slide-body">
+                  <img class="slide-poster" :src="m.cover_url" :alt="m.title" loading="lazy" />
+                  <div class="slide-info">
+                    <div class="kicker">
+                      <span v-if="m.douban_rank" class="rank-badge font-display">TOP {{ m.douban_rank }}</span>
+                      <span v-if="m.categories?.length" class="cats">{{ m.categories.slice(0, 3).join(' / ') }}</span>
+                    </div>
+                    <h2 class="slide-title">
+                      {{ m.title }}<span v-if="m.year" class="slide-year font-display">{{ m.year }}</span>
+                    </h2>
+                    <div class="slide-scores">
+                      <span v-if="m.douban_rating != null" class="sc douban"><i class="font-display">{{ Number(m.douban_rating).toFixed(1) }}</i>豆瓣</span>
+                      <span v-if="m.rating != null" class="sc tmdb"><i class="font-display">{{ Number(m.rating).toFixed(1) }}</i>TMDB</span>
+                      <span v-if="m.my_rating != null" class="sc mine"><i class="font-display">{{ Number(m.my_rating).toFixed(1) }}</i>我的</span>
+                    </div>
+                    <p class="slide-synopsis">{{ m.synopsis || '暂无简介' }}</p>
+                    <div class="slide-actions" @click.stop>
+                      <el-button type="primary" size="large" round @click="openDetail(m)">查看详情</el-button>
+                      <el-button size="large" round @click="playMovie(m)">
+                        <el-icon><VideoPlay /></el-icon>&nbsp;播放
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </el-carousel-item>
+          </el-carousel>
         </div>
-        <div v-if="movies.length" class="wall">
-          <MovieCard v-for="m in movies" :key="m.id" :movie="m" @open="openDetail" @play="playMovie" />
-        </div>
-        <div v-else-if="!loading && !scanPaths.length" class="empty-hero">
-          <el-icon :size="60" color="#4d8ff0"><Film /></el-icon>
-          <h2>欢迎使用电影中心</h2>
-          <p>各硬盘根目录下的「电影」文件夹（如 D:\电影）会在启动时自动识别入库<br />也可以手动添加目录，支持本地硬盘与 NAS</p>
-          <div class="hero-actions">
-            <el-button size="large" @click="settingsVisible = true">添加电影目录</el-button>
-            <el-button type="primary" size="large" :loading="scanning" @click="store.triggerAndAwaitScan()">立即扫描</el-button>
+
+        <!-- 今日放映：当日排片票根 -->
+        <section v-if="daily" class="daily">
+          <div class="daily-ticket">
+            <div class="daily-stub">
+              <span class="daily-label">今日放映</span>
+              <span class="daily-date font-display">{{ dailyDate }}</span>
+              <span class="daily-week">{{ dailyWeek }}</span>
+            </div>
+            <div class="daily-main" @click="openDetail(daily)">
+              <img class="daily-poster" :src="daily.cover_url" :alt="daily.title" loading="lazy" v-if="daily.cover_url" />
+              <div class="daily-info">
+                <h3 class="daily-title">
+                  {{ daily.title }}<span v-if="daily.year" class="daily-year font-display">{{ daily.year }}</span>
+                </h3>
+                <div class="daily-meta">
+                  <span v-if="daily.quality" class="daily-q font-display">{{ daily.quality }}</span>
+                  <span v-if="daily.douban_rating != null" class="sc douban"><i class="font-display">{{ Number(daily.douban_rating).toFixed(1) }}</i>豆瓣</span>
+                  <span v-if="daily.rating != null" class="sc tmdb"><i class="font-display">{{ Number(daily.rating).toFixed(1) }}</i>TMDB</span>
+                  <span v-if="daily.my_rating != null" class="sc mine"><i class="font-display">{{ Number(daily.my_rating).toFixed(1) }}</i>我的</span>
+                  <span v-if="daily.categories?.length" class="daily-cats">{{ daily.categories.slice(0, 3).join(' / ') }}</span>
+                </div>
+                <p class="daily-synopsis">{{ daily.synopsis || '暂无简介' }}</p>
+                <div class="daily-actions" @click.stop>
+                  <el-button size="small" round @click="openDetail(daily)">详情</el-button>
+                  <el-button v-if="!daily.missing" size="small" round type="primary" @click="playMovie(daily)">
+                    <el-icon><VideoPlay /></el-icon>&nbsp;播放
+                  </el-button>
+                  <span v-if="daily.watched" class="replay-tag">重映 · 已看 {{ daily.watch_count || 0 }} 次</span>
+                </div>
+              </div>
+            </div>
           </div>
+        </section>
+
+        <!-- 统计速览 -->
+        <div class="quick-stats">
+          <button v-for="q in quickStats" :key="q.label" class="qcard" @click="$router.push('/stats')">
+            <span class="qicon" :style="{ color: q.color }">
+              <el-icon :size="18"><component :is="q.icon" /></el-icon>
+            </span>
+            <span class="qnum font-display" :class="{ small: q.small }">{{ q.num }}</span>
+            <span class="qlabel">{{ q.label }}</span>
+          </button>
         </div>
-        <el-empty v-else-if="!loading" description="没有符合条件的结果" />
+
+        <!-- 进入电影库 -->
+        <div class="cta-zone">
+          <el-button type="primary" size="large" round class="cta-btn" @click="$router.push('/movies')">
+            <el-icon><Grid /></el-icon>&nbsp;进入电影库 · 共 {{ stats.totals.total }} 部
+          </el-button>
+        </div>
+
+        <!-- 推荐位 -->
+        <section v-if="rows.recent_watched.length" class="row-section">
+          <div class="sec-head">
+            <h3 class="sec-title">最近观看</h3>
+            <el-button link type="primary" class="sec-more" @click="$router.push('/movies')">查看全部</el-button>
+          </div>
+          <div class="h-scroll">
+            <MovieCard v-for="m in rows.recent_watched" :key="m.id" :movie="m" @open="openDetail" @play="playMovie" />
+          </div>
+        </section>
+
+        <section v-if="rows.top_unwatched.length" class="row-section">
+          <div class="sec-head">
+            <h3 class="sec-title">高分未看</h3>
+            <el-button link type="primary" class="sec-more" @click="$router.push('/movies')">查看全部</el-button>
+          </div>
+          <div class="h-scroll">
+            <MovieCard v-for="m in rows.top_unwatched" :key="m.id" :movie="m" @open="openDetail" @play="playMovie" />
+          </div>
+        </section>
+
+        <section v-if="rows.top250.length" class="row-section">
+          <div class="sec-head">
+            <h3 class="sec-title">豆瓣 Top 250 · 已入库 {{ rows.top250.length }} 部</h3>
+            <el-button link type="primary" class="sec-more" @click="$router.push('/movies')">查看全部</el-button>
+          </div>
+          <div class="h-scroll">
+            <MovieCard v-for="m in rows.top250" :key="m.id" :movie="m" @open="openDetail" @play="playMovie" />
+          </div>
+        </section>
       </template>
-      </main>
-    </div>
+    </main>
 
-    <footer v-if="view === 'movies' && total > pageSize" class="pager">
-      <el-pagination
-        background
-        layout="total, prev, pager, next"
-        :total="total"
-        :page-size="pageSize"
-        :current-page="page"
-        @current-change="p => store.setPage(p)"
-      />
-    </footer>
-
-    <MovieDetail v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" />
+    <MovieDetail v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
     <SettingsDialog v-model="settingsVisible" />
   </div>
 </template>
@@ -394,302 +285,555 @@ onMounted(() => {
   gap: 12px;
   align-items: center;
   padding: 14px 28px;
-  background: rgba(11, 14, 20, 0.85);
+  background: rgba(16, 14, 12, 0.86);
   backdrop-filter: blur(10px);
-  border-bottom: 1px solid #1c2432;
+  border-bottom: 1px solid #241d16;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   font-size: 18px;
   font-weight: 700;
-  letter-spacing: 1px;
+  letter-spacing: 2px;
   white-space: nowrap;
+  margin-right: auto;
+  color: #ece3d2;
 }
 
-.search {
-  max-width: 460px;
-  margin-left: auto;
+.logo {
+  width: 26px;
+  height: 26px;
+  color: #e0a458;
 }
 
-.layout {
+.pick-btn {
+  font-weight: 600;
+}
+
+.home-main {
   flex: 1;
-  display: flex;
-  align-items: stretch;
-  min-height: 0;
-}
-
-.sidebar {
-  flex: 0 0 clamp(190px, 19vw, 300px);
-  padding: 20px 18px 24px 30px;
-  border-right: 1px solid #1c2432;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  position: sticky;
-  top: 62px;
-  align-self: flex-start;
-  max-height: calc(100vh - 62px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 26px 28px 44px;
   box-sizing: border-box;
 }
 
-.sidebar-title {
-  font-size: 15px;
-  color: #8b93a5;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  margin-bottom: 2px;
-}
-
-.sidebar-item {
-  width: 100%;
-}
-
-.sidebar-btn {
-  width: 100%;
-  display: inline-flex;
-  align-items: center;
-}
-
-.sidebar-btn > :deep(span) {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-/* 覆盖 Element Plus 的 .el-button+.el-button{margin-left:12px}，
-   侧边栏竖排按钮不应有额外左边距 */
-.sidebar-btn + .sidebar-btn {
-  margin-left: 0;
-}
-
-.btn-label {
+/* ---------- 银幕 ---------- */
+.screen {
+  border-radius: 6px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px #2c231b;
+  margin-bottom: 30px;
+  filter: brightness(0.25) saturate(0.6);
+  transition: filter 1.6s ease;
 }
 
-.clear-icon {
+.screen.on {
+  filter: brightness(1) saturate(1);
+}
+
+.slide {
+  position: relative;
+  height: 100%;
   cursor: pointer;
-  font-size: 13px;
 }
 
-.person-page-header {
+.slide-bg {
+  position: absolute;
+  inset: -50px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(28px) brightness(0.42);
+  animation: kb 26s ease-in-out infinite alternate;
+}
+
+@keyframes kb {
+  from { transform: scale(1.05) translateX(-1.2%); }
+  to { transform: scale(1.16) translateX(1.2%); }
+}
+
+.slide-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(16, 14, 12, 0.86) 0%, rgba(16, 14, 12, 0.38) 58%, rgba(16, 14, 12, 0.6) 100%),
+    linear-gradient(180deg, transparent 55%, #100e0c 100%);
+}
+
+.slide-body {
+  position: relative;
+  height: 100%;
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 18px;
-  flex-wrap: wrap;
+  gap: 40px;
+  padding: 30px 52px;
+  box-sizing: border-box;
 }
 
-.browse-back {
+.slide-poster {
+  height: 88%;
+  max-height: 348px;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.65);
+  flex-shrink: 0;
+}
+
+.slide-info {
+  min-width: 0;
+  max-width: 640px;
+}
+
+.kicker {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 14px;
-}
-
-.browse-current {
   font-size: 14px;
-  color: #8b93a5;
+  color: #9a8b74;
 }
 
-.person-page-title {
-  font-size: 17px;
-  font-weight: 700;
+.rank-badge {
+  background: #e0a458;
+  color: #100e0c;
+  font-size: 14px;
+  padding: 2px 8px 1px;
+  border-radius: 6px;
 }
 
-.person-total {
-  font-size: 13px;
-  color: #8b93a5;
+.cats {
+  color: #cfc2ac;
+}
+
+.slide-title {
+  margin: 12px 0 6px;
+  font-size: 40px;
+  line-height: 1.22;
+  font-weight: 800;
+  color: #ece3d2;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+}
+
+.slide-year {
+  font-size: 30px;
+  color: #e0a458;
   font-weight: 400;
 }
 
-.person-search {
-  margin-left: auto;
-  width: 240px;
+.slide-scores {
+  display: flex;
+  gap: 20px;
+  margin: 10px 0 6px;
 }
 
-.person-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 24px 20px;
+.sc {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12px;
+  color: #9a8b74;
 }
 
-.person-card {
+.sc i {
+  font-style: normal;
+  font-size: 24px;
+}
+
+.sc.douban i { color: #93c78f; }
+.sc.tmdb i { color: #e6c37a; }
+.sc.mine i { color: #8fd8b4; }
+
+.slide-synopsis {
+  margin: 10px 0 20px;
+  font-size: 14px;
+  line-height: 1.9;
+  color: #cfc2ac;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.slide-actions {
+  display: flex;
+  gap: 14px;
+}
+
+@media (max-width: 760px) {
+  .slide-body {
+    flex-direction: column;
+    justify-content: center;
+    padding: 24px;
+    gap: 18px;
+    text-align: center;
+  }
+
+  .slide-poster {
+    height: auto;
+    width: 148px;
+  }
+
+  .slide-title {
+    font-size: 26px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .kicker,
+  .slide-scores,
+  .slide-actions {
+    justify-content: center;
+  }
+}
+
+/* ---------- 今日放映 ---------- */
+.daily {
+  margin-bottom: 30px;
+}
+
+.daily-ticket {
+  position: relative;
+  display: flex;
+  background: #17120d;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: box-shadow 0.25s, border-color 0.25s;
+}
+
+.daily-ticket:hover {
+  border-color: rgba(224, 164, 88, 0.4);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+}
+
+.daily-stub {
+  position: relative;
+  flex: 0 0 148px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 20px 12px;
-  border-radius: 12px;
-  cursor: pointer;
-  text-align: center;
-  transition: background 0.2s, transform 0.2s;
-}
-
-.person-card:hover {
-  background: rgba(77, 143, 240, 0.08);
-  transform: translateY(-2px);
-}
-
-.person-card.active {
-  background: rgba(77, 143, 240, 0.15);
-}
-
-.person-avatar {
-  width: 128px;
-  height: 128px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: #1a2130;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
-}
-
-.person-avatar.fallback {
-  display: flex;
-  align-items: center;
   justify-content: center;
-  font-size: 44px;
-  color: #8b93a5;
+  gap: 5px;
+  background: #1e1710;
+  border-right: 2px dashed #3a2e20;
 }
 
-.person-name {
-  font-size: 15px;
+/* 票根打孔 */
+.daily-stub::before,
+.daily-stub::after {
+  content: '';
+  position: absolute;
+  right: -9px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.daily-stub::before { top: -8px; }
+.daily-stub::after { bottom: -8px; }
+
+.daily-label {
+  font-size: 13px;
+  letter-spacing: 5px;
+  text-indent: 5px;
+  color: var(--accent);
   font-weight: 600;
-  line-height: 1.3;
-  word-break: break-all;
 }
 
-.person-count {
+.daily-date {
+  font-size: 42px;
+  line-height: 1;
+  color: var(--text);
+}
+
+.daily-week {
   font-size: 13px;
-  color: #6b7385;
+  color: var(--muted);
 }
 
-.person-empty {
-  grid-column: 1 / -1;
-  color: #8b93a5;
-  font-size: 13px;
-  text-align: center;
-  padding: 48px 0;
-}
-
-.stats {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #8b93a5;
-  line-height: 1.9;
-  word-break: break-word;
-}
-
-.missing {
-  color: #e6a23c;
-}
-
-.content {
+.daily-main {
   flex: 1;
   min-width: 0;
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 20px 28px 28px;
-  box-sizing: border-box;
-  min-height: 300px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 24px;
+  cursor: pointer;
 }
 
-@media (max-width: 900px) {
-  .sidebar {
-    padding-left: 16px;
-  }
+.daily-poster {
+  width: 86px;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
 }
 
-@media (max-width: 640px) {
-  .layout {
+.daily-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.daily-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.daily-year {
+  font-size: 18px;
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.daily-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.daily-q {
+  font-size: 13px;
+  color: #e6c37a;
+  border: 1px solid rgba(230, 195, 122, 0.45);
+  border-radius: 5px;
+  padding: 0 6px;
+}
+
+.daily-cats {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.daily-synopsis {
+  margin: 6px 0 10px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.daily-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.replay-tag {
+  font-size: 12px;
+  color: #9aab6e;
+  border: 1px solid rgba(154, 171, 110, 0.4);
+  padding: 1px 9px;
+  border-radius: 12px;
+}
+
+@media (max-width: 760px) {
+  .daily-ticket {
     flex-direction: column;
   }
 
-  .sidebar {
+  .daily-stub {
     flex: none;
-    width: 100%;
     flex-direction: row;
-    flex-wrap: wrap;
-    position: static;
+    gap: 14px;
+    padding: 10px;
     border-right: none;
-    border-bottom: 1px solid #1c2432;
-    max-height: none;
+    border-bottom: 2px dashed #3a2e20;
   }
 
-  .sidebar-item,
-  .sidebar-btn {
-    flex: 1 1 40%;
-    width: auto;
+  .daily-stub::before,
+  .daily-stub::after {
+    right: auto;
+    bottom: -9px;
   }
 
-  .sidebar-title {
-    display: none;
+  .daily-stub::before { left: -8px; }
+  .daily-stub::after { right: -8px; }
+
+  .daily-date {
+    font-size: 26px;
+  }
+
+  .daily-main {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .daily-title {
+    justify-content: center;
+    white-space: normal;
+  }
+
+  .daily-meta,
+  .daily-actions {
+    justify-content: center;
   }
 }
 
-.wall {
+/* ---------- 统计速览 ---------- */
+.quick-stats {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 22px 16px;
+  gap: 12px;
+  margin-bottom: 28px;
 }
 
 @media (max-width: 1100px) {
-  .wall {
-    grid-template-columns: repeat(5, 1fr);
-  }
-}
-
-@media (max-width: 900px) {
-  .wall {
-    grid-template-columns: repeat(4, 1fr);
-  }
+  .quick-stats { grid-template-columns: repeat(3, 1fr); }
 }
 
 @media (max-width: 620px) {
-  .wall {
-    grid-template-columns: repeat(3, 1fr);
-  }
+  .quick-stats { grid-template-columns: repeat(2, 1fr); }
 }
 
+.qcard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  border-left: 2px solid #2c231b;
+  border-radius: 0;
+  padding: 10px 4px 10px 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.25s;
+}
+
+.qcard:hover {
+  border-left-color: #e0a458;
+}
+
+.qcard:hover .qnum {
+  color: #e0a458;
+}
+
+.qicon {
+  display: flex;
+}
+
+.qnum {
+  font-size: 30px;
+  line-height: 1;
+  color: #ece3d2;
+  transition: color 0.25s;
+}
+
+.qnum.small {
+  font-size: 19px;
+  line-height: 1.4;
+}
+
+.qlabel {
+  font-size: 12px;
+  color: #9a8b74;
+  align-self: flex-end;
+  padding-bottom: 3px;
+}
+
+/* ---------- 进入电影库 ---------- */
+.cta-zone {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 34px;
+}
+
+.cta-btn {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 22px 44px;
+  height: auto;
+}
+
+/* ---------- 推荐位 ---------- */
+.row-section {
+  margin-bottom: 32px;
+}
+
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #241d16;
+  padding-bottom: 10px;
+}
+
+.sec-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #ece3d2;
+}
+
+.sec-more {
+  margin-left: auto;
+}
+
+.h-scroll {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.h-scroll :deep(.movie-card) {
+  flex: 0 0 138px;
+}
+
+/* ---------- 空库 ---------- */
 .empty-hero {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   padding: 120px 20px 0;
   text-align: center;
 }
 
+.empty-logo {
+  width: 64px;
+  height: 64px;
+  color: #e0a458;
+}
+
 .empty-hero h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 24px;
+  color: #ece3d2;
 }
 
 .empty-hero p {
   margin: 0;
-  color: #8b93a5;
+  color: #9a8b74;
   max-width: 480px;
-  line-height: 1.8;
+  line-height: 1.9;
 }
 
 .hero-actions {
   display: flex;
   gap: 12px;
   margin-top: 8px;
-}
-
-.pager {
-  display: flex;
-  justify-content: center;
-  padding: 8px 0 28px;
 }
 </style>

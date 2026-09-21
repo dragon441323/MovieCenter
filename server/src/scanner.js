@@ -2,6 +2,9 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { db } from './db.js'
 import { updateDoubanRanks } from './douban.js'
+import { buildSearchText } from './search.js'
+import { parseQuality } from './quality.js'
+import { probeQualityBatch } from './probe.js'
 
 const VIDEO_EXTS = new Set([
   '.mkv', '.mp4', '.avi', '.rmvb', '.rm', '.ts', '.iso', '.m2ts', '.mts',
@@ -92,29 +95,31 @@ export async function scanAll() {
     }
 
     const now = new Date().toISOString()
-    const existing = db.prepare('SELECT id, path, missing FROM movie').all()
+    const existing = db.prepare('SELECT id, path, missing, quality FROM movie').all()
     const existingByPath = new Map(existing.map(m => [m.path.toLowerCase(), m]))
     let added = 0, updated = 0, restored = 0, missingCount = 0
 
     try {
       db.exec('BEGIN IMMEDIATE')
       const insert = db.prepare(
-        'INSERT INTO movie (title, year, path, video_file, file_size, last_scan_at) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO movie (title, year, path, video_file, file_size, quality, search_text, last_scan_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       )
       const update = db.prepare(
-        'UPDATE movie SET video_file = ?, file_size = ?, last_scan_at = ?, missing = 0, updated_at = ? WHERE id = ?'
+        'UPDATE movie SET video_file = ?, file_size = ?, quality = ?, last_scan_at = ?, missing = 0, updated_at = ? WHERE id = ?'
       )
       const markMissing = db.prepare('UPDATE movie SET missing = 1, updated_at = ? WHERE id = ?')
 
       for (const [key, info] of found) {
+        const quality = parseQuality(info.title, info.video_file)
         const ex = existingByPath.get(key)
         if (ex) {
-          update.run(info.video_file, info.file_size, now, now, ex.id)
+          // 文件名无法判断时保留既有画质（可能来自 ffprobe 深度识别）
+          update.run(info.video_file, info.file_size, quality || ex.quality || '', now, now, ex.id)
           if (ex.missing) restored++
           else updated++
         } else {
           const { title, year } = parseTitleAndYear(info.title)
-          insert.run(title, year, info.path, info.video_file, info.file_size, now)
+          insert.run(title, year, info.path, info.video_file, info.file_size, quality, buildSearchText(title), now)
           added++
         }
       }
@@ -132,6 +137,26 @@ export async function scanAll() {
       throw err
     }
 
+    // ffprobe 深度识别：仅处理文件名判断不出画质的影片
+    let probedQuality = 0
+    try {
+      const emptyQ = db.prepare(
+        "SELECT id, video_file FROM movie WHERE missing = 0 AND quality = '' AND video_file != ''"
+      ).all()
+      if (emptyQ.length) {
+        const updates = await probeQualityBatch(emptyQ)
+        if (updates.length) {
+          const updQ = db.prepare('UPDATE movie SET quality = ? WHERE id = ?')
+          db.exec('BEGIN')
+          for (const u of updates) updQ.run(u.quality, u.id)
+          db.exec('COMMIT')
+          probedQuality = updates.length
+        }
+      }
+    } catch (err) {
+      console.error('[scan] probe quality failed:', err.message)
+    }
+
     // 扫描入库后重新匹配豆瓣 Top 250（榜单未抓取过时跳过）
     try { updateDoubanRanks() } catch {}
 
@@ -144,6 +169,7 @@ export async function scanAll() {
       updated,
       restored,
       missing: missingCount,
+      probedQuality,
       totalMovies: db.prepare('SELECT COUNT(*) AS c FROM movie WHERE missing = 0').get().c
     }
     scanState.lastResult = result

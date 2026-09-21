@@ -60,5 +60,17 @@ export const api = {
   doubanTop250: () => request('GET', '/api/douban/top250'),
   doubanRefresh: () => request('POST', '/api/douban/refresh'),
   doubanSyncRatings: () => request('POST', '/api/douban/ratings'),
-  doubanSyncStatus: () => request('GET', '/api/douban/ratings')
+  doubanSyncStatus: () => request('GET', '/api/douban/ratings'),
+  movieRows: () => request('GET', '/api/movies/rows'),
+  pickMovie: (params = {}) => request('GET', '/api/movies/pick?' + toQuery(params)),
+  dailyMovie: () => request('GET', '/api/movies/daily'),
+  personDetail: name => request('GET', '/api/person/detail?name=' + encodeURIComponent(name)),
+  duplicates: () => request('GET', '/api/movies/duplicates'),
+  stats: () => request('GET', '/api/stats'),
+  collections: () => request('GET', '/api/collections'),
+  collection: id => request('GET', `/api/collections/${id}`),
+  backupInfo: () => request('GET', '/api/system/backup'),
+  backupNow: () => request('POST', '/api/system/backup'),
+  autostartStatus: () => request('GET', '/api/system/autostart'),
+  setAutostart: enabled => request('POST', '/api/system/autostart', { enabled })
 }

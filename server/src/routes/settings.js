@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import fs from 'node:fs'
 import { db } from '../db.js'
+import { ffprobeAvailable } from '../probe.js'
 
 export const settingsRouter = Router()
 
@@ -21,8 +22,8 @@ function upsert(key, value) {
   db.prepare('INSERT INTO settings ("key", value) VALUES (?, ?) ON CONFLICT("key") DO UPDATE SET value = excluded.value').run(key, value)
 }
 
-settingsRouter.get('/', (req, res) => {
-  res.json(getSettings())
+settingsRouter.get('/', async (req, res) => {
+  res.json({ ...getSettings(), probe_available: await ffprobeAvailable() })
 })
 
 settingsRouter.put('/', (req, res) => {

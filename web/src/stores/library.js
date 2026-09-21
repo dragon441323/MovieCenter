@@ -17,31 +17,38 @@ export const useLibraryStore = defineStore('library', {
     scanPaths: [],
     scanning: false,
     scanState: null,
-    filters: { q: '', category: '', tags: [], year: null, favorite: false, watched: '', myRating: '', director: '', actor: '', top250: false, sort: 'rating', order: 'desc' }
+    rows: { recent_watched: [], top_unwatched: [], top250: [], featured: [] },
+    filters: { q: '', category: '', tags: [], year: null, favorite: false, watched: '', myRating: '', director: '', actor: '', top250: false, country: '', quality: '', sort: 'rating', order: 'desc' }
   }),
   actions: {
+    buildFilterParams() {
+      const f = this.filters
+      const params = {}
+      if (f.q) params.q = f.q
+      if (f.category) params.category = f.category
+      if (f.tags.length) params.tags = f.tags.join(',')
+      if (f.year != null) params.year = f.year
+      if (f.favorite) params.favorite = true
+      if (f.watched === 'watched') params.watched = true
+      else if (f.watched === 'unwatched') params.watched = false
+      if (f.myRating === 'none') params.unrated = true
+      else if (f.myRating) {
+        const dash = f.myRating.indexOf('-')
+        params.my_min = f.myRating.slice(0, dash)
+        const max = f.myRating.slice(dash + 1)
+        if (max) params.my_max = max
+      }
+      if (f.director) params.director = f.director
+      if (f.actor) params.actor = f.actor
+      if (f.top250) params.top250 = true
+      if (f.country) params.country = f.country
+      if (f.quality) params.quality = f.quality
+      return params
+    },
     async fetchMovies() {
       this.loading = true
       try {
-        const f = this.filters
-        const params = { page: this.page, page_size: this.pageSize, sort: f.sort, order: f.order }
-        if (f.q) params.q = f.q
-        if (f.category) params.category = f.category
-        if (f.tags.length) params.tags = f.tags.join(',')
-        if (f.year != null) params.year = f.year
-        if (f.favorite) params.favorite = true
-        if (f.watched === 'watched') params.watched = true
-        else if (f.watched === 'unwatched') params.watched = false
-        if (f.myRating === 'none') params.unrated = true
-        else if (f.myRating) {
-          const dash = f.myRating.indexOf('-')
-          params.my_min = f.myRating.slice(0, dash)
-          const max = f.myRating.slice(dash + 1)
-          if (max) params.my_max = max
-        }
-        if (f.director) params.director = f.director
-        if (f.actor) params.actor = f.actor
-        if (f.top250) params.top250 = true
+        const params = { page: this.page, page_size: this.pageSize, sort: this.filters.sort, order: this.filters.order, ...this.buildFilterParams() }
         const data = await api.movies(params)
         this.movies = data.items
         this.total = data.total
@@ -50,6 +57,23 @@ export const useLibraryStore = defineStore('library', {
       } finally {
         this.loading = false
       }
+    },
+    async fetchRows() {
+      try {
+        this.rows = await api.movieRows()
+      } catch {}
+    },
+    async pickTonight() {
+      const params = this.buildFilterParams()
+      if (this.filters.watched === '' && params.watched == null) {
+        try {
+          return (await api.pickMovie({ ...params, watched: false })).movie
+        } catch (e) {
+          if (!String(e.message).includes('没有符合条件')) throw e
+        }
+      }
+      const r = await api.pickMovie(params)
+      return r.movie
     },
     async fetchMeta() {
       try {
@@ -115,7 +139,7 @@ export const useLibraryStore = defineStore('library', {
           this.scanState = st
           if (!st.scanning && st.lastResult) break
         }
-        await Promise.all([this.fetchMovies(), this.fetchMeta()])
+        await Promise.all([this.fetchMovies(), this.fetchMeta(), this.fetchRows()])
       } catch (e) {
         ElMessage.error(e.message)
       } finally {

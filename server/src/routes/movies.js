@@ -3,6 +3,7 @@ import multer from 'multer'
 import { db } from '../db.js'
 import { saveCoverBuffer, removeCoverFile } from '../covers.js'
 import { playFile } from '../player.js'
+import { buildSearchText } from '../search.js'
 
 export const movieRouter = Router()
 
@@ -56,7 +57,13 @@ function parseActors(value) {
 export function serializeMovie(row) {
   let actors = []
   try { actors = JSON.parse(row.actors || '[]') } catch {}
-  return { ...row, actors, categories: parseCategories(row.category), cover_url: row.cover ? `/covers/${row.cover}` : null }
+  return {
+    ...row,
+    actors,
+    categories: parseCategories(row.category),
+    countries: parseCategories(row.country),
+    cover_url: row.cover ? `/covers/${row.cover}` : null
+  }
 }
 
 export function attachTags(rows) {
@@ -100,8 +107,7 @@ function parseId(raw) {
   return Number.isInteger(id) && id > 0 ? id : null
 }
 
-movieRouter.get('/', (req, res) => {
-  const q = req.query
+function buildMovieFilters(q) {
   const where = []
   const params = []
 
@@ -110,14 +116,28 @@ movieRouter.get('/', (req, res) => {
 
   if (q.q) {
     const like = `%${escapeLike(String(q.q))}%`
-    where.push("(title LIKE ? ESCAPE '\\' OR director LIKE ? ESCAPE '\\' OR actors LIKE ? ESCAPE '\\' OR synopsis LIKE ? ESCAPE '\\')")
-    params.push(like, like, like, like)
+    where.push("(title LIKE ? ESCAPE '\\' OR director LIKE ? ESCAPE '\\' OR actors LIKE ? ESCAPE '\\' OR synopsis LIKE ? ESCAPE '\\' OR search_text LIKE ? ESCAPE '\\')")
+    params.push(like, like, like, like, like)
   }
   if (q.category) {
     const val = String(q.category).replace(/"/g, '').trim()
     if (val) {
       where.push('category LIKE ?')
       params.push(`%"${escapeLike(val)}"%`)
+    }
+  }
+  if (q.country) {
+    const val = String(q.country).replace(/"/g, '').trim()
+    if (val) {
+      where.push('country LIKE ?')
+      params.push(`%"${escapeLike(val)}"%`)
+    }
+  }
+  if (q.quality) {
+    const val = String(q.quality).trim()
+    if (val) {
+      where.push('quality = ?')
+      params.push(val)
     }
   }
   if (q.director) {
@@ -167,7 +187,12 @@ movieRouter.get('/', (req, res) => {
     params.push(...tagNames)
   }
 
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', params }
+}
+
+movieRouter.get('/', (req, res) => {
+  const q = req.query
+  const { whereSql, params } = buildMovieFilters(q)
   const total = db.prepare(`SELECT COUNT(*) AS c FROM movie ${whereSql}`).get(...params).c
 
   const sort = SORTS[q.sort] ? q.sort : 'rating'
@@ -181,6 +206,92 @@ movieRouter.get('/', (req, res) => {
   ).all(...params, pageSize, offset)
 
   res.json({ total, page, page_size: pageSize, items: attachTags(rows) })
+})
+
+movieRouter.get('/pick', (req, res) => {
+  const { whereSql, params } = buildMovieFilters(req.query)
+  const candidates = db.prepare(
+    `SELECT id, COALESCE(douban_rating, rating, 6) AS w FROM movie ${whereSql}`
+  ).all(...params)
+  if (!candidates.length) return res.status(404).json({ error: '没有符合条件的电影' })
+  const totalWeight = candidates.reduce((s, c) => s + c.w, 0)
+  let roll = Math.random() * totalWeight
+  let picked = candidates[0]
+  for (const c of candidates) {
+    roll -= c.w
+    if (roll <= 0) {
+      picked = c
+      break
+    }
+  }
+  const row = db.prepare('SELECT * FROM movie WHERE id = ?').get(picked.id)
+  res.json({ movie: attachTags([row])[0] })
+})
+
+// 今日放映：以本地日期为种子的确定性选片，同一天内结果固定
+movieRouter.get('/daily', (req, res) => {
+  const ids = db.prepare('SELECT id FROM movie WHERE missing = 0 ORDER BY id').all().map(r => r.id)
+  if (!ids.length) return res.status(404).json({ error: '影库是空的' })
+  const now = new Date()
+  const key = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`
+  let h = 2166136261
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  const id = ids[Math.abs(h) % ids.length]
+  const row = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
+  res.json({ movie: attachTags([row])[0], date: key })
+})
+
+movieRouter.get('/rows', (req, res) => {
+  const recent = db.prepare(
+    'SELECT * FROM movie WHERE missing = 0 AND last_watched_at IS NOT NULL ORDER BY last_watched_at DESC LIMIT 12'
+  ).all()
+  const topUnwatched = db.prepare(
+    'SELECT * FROM movie WHERE missing = 0 AND watched = 0 AND (douban_rating >= 8 OR rating >= 8) ORDER BY COALESCE(douban_rating, rating) DESC LIMIT 12'
+  ).all()
+  const top250 = db.prepare(
+    'SELECT * FROM movie WHERE missing = 0 AND douban_rank IS NOT NULL ORDER BY douban_rank LIMIT 12'
+  ).all()
+  const featured = db.prepare(
+    "SELECT * FROM movie WHERE missing = 0 AND cover != '' ORDER BY COALESCE(douban_rating, rating, 0) DESC LIMIT 8"
+  ).all()
+  res.json({
+    recent_watched: attachTags(recent),
+    top_unwatched: attachTags(topUnwatched),
+    top250: attachTags(top250),
+    featured: attachTags(featured)
+  })
+})
+
+movieRouter.get('/duplicates', (req, res) => {
+  const rows = db.prepare(
+    'SELECT id, title, year, path, file_size, cover FROM movie WHERE missing = 0'
+  ).all()
+  const groups = new Map()
+  for (const r of rows) {
+    const key = String(r.title || '').trim().toLowerCase()
+    if (!key) continue
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(r)
+  }
+  const out = []
+  for (const [, entries] of groups) {
+    if (entries.length < 2) continue
+    out.push({
+      title: entries[0].title,
+      years: [...new Set(entries.map(e => e.year).filter(y => y != null))],
+      entries: entries
+        .sort((a, b) => b.file_size - a.file_size)
+        .map(e => ({
+          id: e.id, title: e.title, year: e.year, path: e.path,
+          file_size: e.file_size, cover_url: e.cover ? `/covers/${e.cover}` : null
+        }))
+    })
+  }
+  out.sort((a, b) => b.entries.length - a.entries.length)
+  res.json({ groups: out })
 })
 
 movieRouter.get('/:id', (req, res) => {
@@ -201,16 +312,19 @@ movieRouter.put('/:id', (req, res) => {
   const b = req.body || {}
   const sets = []
   const params = []
+  let rebuildSearch = false
 
   if ('title' in b) {
     const title = String(b.title || '').trim()
     if (!title) return res.status(400).json({ error: '标题不能为空' })
     sets.push('title = ?')
     params.push(title)
+    rebuildSearch = true
   }
   if ('original_title' in b) {
     sets.push('original_title = ?')
     params.push(String(b.original_title ?? '').trim())
+    rebuildSearch = true
   }
   if ('year' in b) {
     if (b.year === null || b.year === '') {
@@ -244,6 +358,14 @@ movieRouter.put('/:id', (req, res) => {
     const cats = [...new Set(raw.map(c => c.trim()).filter(Boolean))]
     sets.push('category = ?')
     params.push(JSON.stringify(cats))
+  }
+  if ('country' in b || 'countries' in b) {
+    const raw = 'countries' in b
+      ? (Array.isArray(b.countries) ? b.countries.map(String) : String(b.countries || '').split('/'))
+      : [String(b.country ?? '')]
+    const countries = [...new Set(raw.map(c => c.trim()).filter(Boolean))]
+    sets.push('country = ?')
+    params.push(JSON.stringify(countries))
   }
   if ('rating' in b) {
     if (b.rating === null || b.rating === '') {
@@ -297,6 +419,10 @@ movieRouter.put('/:id', (req, res) => {
       sets.push("updated_at = datetime('now')")
       db.prepare(`UPDATE movie SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
     }
+    if (rebuildSearch) {
+      const fresh = db.prepare('SELECT title, original_title FROM movie WHERE id = ?').get(id)
+      db.prepare('UPDATE movie SET search_text = ? WHERE id = ?').run(buildSearchText(fresh.title, fresh.original_title), id)
+    }
     if (newMyRating !== undefined && newMyRating !== null && oldRow?.my_rating !== newMyRating) {
       db.prepare('INSERT INTO rating_history (movie_id, rating) VALUES (?, ?)').run(id, newMyRating)
     }
@@ -347,7 +473,10 @@ movieRouter.post('/:id/watch', (req, res) => {
   if (!db.prepare('SELECT id FROM movie WHERE id = ?').get(id)) {
     return res.status(404).json({ error: '电影不存在' })
   }
-  db.prepare("UPDATE movie SET watch_count = watch_count + 1, watched = 1, updated_at = datetime('now') WHERE id = ?").run(id)
+  db.prepare(`
+    UPDATE movie SET watch_count = watch_count + 1, watched = 1, last_watched_at = ?,
+      updated_at = datetime('now') WHERE id = ?
+  `).run(new Date().toISOString(), id)
   const updated = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
   res.json(attachTags([updated])[0])
 })

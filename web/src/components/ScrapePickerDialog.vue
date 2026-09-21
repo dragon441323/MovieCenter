@@ -113,15 +113,15 @@ function doLookup() {
   display: flex;
   gap: 14px;
   padding: 10px;
-  border: 1px solid #232b3b;
+  border: 1px solid #2e241b;
   border-radius: 8px;
   cursor: pointer;
   transition: border-color 0.2s, background 0.2s;
 }
 
 .cand:hover {
-  border-color: #4d8ff0;
-  background: rgba(77, 143, 240, 0.06);
+  border-color: #e0a458;
+  background: rgba(224, 164, 88, 0.06);
 }
 
 .cand img,
@@ -131,7 +131,7 @@ function doLookup() {
   object-fit: cover;
   border-radius: 4px;
   flex-shrink: 0;
-  background: #1a2130;
+  background: #221b14;
 }
 
 .no-poster {
@@ -139,7 +139,7 @@ function doLookup() {
   align-items: center;
   justify-content: center;
   font-size: 11px;
-  color: #4a5568;
+  color: #6a5c4a;
   box-sizing: border-box;
 }
 
@@ -155,20 +155,20 @@ function doLookup() {
 
 .orig {
   font-size: 12px;
-  color: #8b93a5;
+  color: #9a8b74;
   font-weight: 400;
   margin-left: 6px;
 }
 
 .cand-meta {
   font-size: 12px;
-  color: #8b93a5;
+  color: #9a8b74;
   margin: 4px 0;
 }
 
 .cand-overview {
   font-size: 12px;
-  color: #6b7385;
+  color: #7d7160;
   line-height: 1.6;
   display: -webkit-box;
   -webkit-line-clamp: 2;

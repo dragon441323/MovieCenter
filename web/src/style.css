@@ -4,20 +4,77 @@ html, body, #app {
 
 body {
   margin: 0;
-  background: #0b0e14;
-  color: #e5e9f0;
+  background: radial-gradient(1400px 900px at 50% -12%, #1b1410 0%, #100e0c 58%);
+  background-attachment: fixed;
+  color: #ece3d2;
   font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
+:root {
+  --bg: #100e0c;
+  --surface: #1a1511;
+  --surface-2: #221b14;
+  --line: #2c231b;
+  --line-soft: #241d16;
+  --text: #ece3d2;
+  --text-2: #cfc2ac;
+  --muted: #9a8b74;
+  --muted-2: #7d7160;
+  --accent: #e0a458;
+  --accent-deep: #c98f47;
+  --score-douban: #93c78f;
+  --score-tmdb: #e6c37a;
+  --score-mine: #8fd8b4;
+}
+
 html.dark {
-  --el-bg-color: #10151f;
-  --el-bg-color-overlay: #161d29;
-  --el-border-color-light: #2a3345;
-  --el-border-color-lighter: #232b3b;
-  --el-fill-color-blank: #131926;
-  --el-text-color-primary: #e5e9f0;
-  --el-text-color-regular: #c0c7d4;
+  --el-color-primary: #e0a458;
+  --el-color-primary-light-3: #c98f47;
+  --el-color-primary-light-5: #a9743a;
+  --el-color-primary-light-7: #7c562b;
+  --el-color-primary-light-8: #654623;
+  --el-color-primary-light-9: #4a351c;
+  --el-color-primary-dark-2: #e8b271;
+
+  --el-color-success: #9aab6e;
+  --el-color-warning: #d99a4e;
+  --el-color-danger: #e07a6a;
+  --el-color-error: #e07a6a;
+  --el-color-info: #9a8b74;
+
+  --el-bg-color: #171310;
+  --el-bg-color-overlay: #1e1813;
+  --el-bg-color-page: #100e0c;
+
+  --el-border-color: #2c231b;
+  --el-border-color-light: #2c231b;
+  --el-border-color-lighter: #241d16;
+  --el-border-color-extra-light: #1f1912;
+
+  --el-fill-color: #241d16;
+  --el-fill-color-light: #2a2119;
+  --el-fill-color-lighter: #1f1912;
+  --el-fill-color-blank: #1a1512;
+  --el-fill-color-dark: #17120e;
+
+  --el-text-color-primary: #ece3d2;
+  --el-text-color-regular: #cfc2ac;
+  --el-text-color-secondary: #9a8b74;
+  --el-text-color-placeholder: #6a5c4a;
+  --el-text-color-disabled: #4e4438;
+
+  --el-mask-color: rgba(16, 14, 12, 0.8);
+}
+
+.font-display {
+  font-family: 'Bebas Neue', 'Segoe UI', sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+}
+
+::selection {
+  background: rgba(224, 164, 88, 0.35);
 }
 
 ::-webkit-scrollbar {
@@ -26,14 +83,24 @@ html.dark {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a3140;
+  background: #33291f;
   border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a455c;
+  background: #453726;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

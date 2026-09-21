@@ -6,12 +6,13 @@ import { api } from '../api'
 import { formatSize } from '../utils'
 import { useLibraryStore } from '../stores/library'
 import ScrapePickerDialog from './ScrapePickerDialog.vue'
+import CollectionDialog from './CollectionDialog.vue'
 
 const props = defineProps({
   movie: { type: Object, required: true }
 })
 
-const emit = defineEmits(['updated'])
+const emit = defineEmits(['updated', 'open-movie', 'open-person'])
 
 const store = useLibraryStore()
 const visible = defineModel({ type: Boolean, default: false })
@@ -22,7 +23,7 @@ const uploading = ref(false)
 const fileInput = ref(null)
 
 const form = reactive({
-  title: '', original_title: '', year: null, categories: [], director: '',
+  title: '', year: null, categories: [], countries: [], director: '',
   actors: [], tags: [], rating: null, my_rating: null,
   favorite: false, watched: false, watch_count: 0, synopsis: ''
 })
@@ -40,6 +41,7 @@ function resetForm(m) {
   form.original_title = m.original_title || ''
   form.year = m.year
   form.categories = m.categories ? [...m.categories] : []
+  form.countries = m.countries ? [...m.countries] : []
   form.director = m.director || ''
   form.actors = m.actors ? [...m.actors] : []
   form.tags = m.tags ? m.tags.map(t => t.name) : []
@@ -63,6 +65,7 @@ async function save() {
       original_title: form.original_title.trim(),
       year: form.year,
       categories: form.categories,
+      countries: form.countries,
       director: form.director,
       actors: form.actors,
       tags: form.tags,
@@ -238,10 +241,20 @@ const categoryOptions = computed(() => {
   return [...set]
 })
 
+const countryOptions = computed(() => {
+  const set = new Set(store.meta.countries)
+  form.countries.forEach(c => set.add(c))
+  return [...set]
+})
+
 const videoName = computed(() => {
   const p = props.movie.video_file || ''
   return p.split(/[\\/]/).pop() || p
 })
+
+const directorNames = computed(() =>
+  String(props.movie.director || '').split(/[\/、,，;；|]/).map(s => s.trim()).filter(Boolean)
+)
 
 // 优先展示 TMDB 原名；没有时回退解析标题中的英文部分（如「星际穿越 Interstellar」→ Interstellar）
 const displayOriginal = computed(() => {
@@ -257,6 +270,7 @@ const displayOriginal = computed(() => {
 const scraping = ref(false)
 const pickerVisible = ref(false)
 const candidates = ref([])
+const collectionVisible = ref(false)
 const searching = ref(false)
 const looking = ref(false)
 
@@ -352,6 +366,14 @@ async function onLookup(imdbId) {
         <div class="chips">
           <el-tag v-for="c in movie.categories" :key="c" type="primary" effect="dark">{{ c }}</el-tag>
           <el-tag v-for="t in movie.tags" :key="t.id" effect="plain">{{ t.name }}</el-tag>
+          <el-tag
+            v-if="movie.collection_name"
+            class="collection-tag"
+            type="warning"
+            effect="dark"
+            title="查看系列"
+            @click="collectionVisible = true"
+          >{{ movie.collection_name }} ▸</el-tag>
         </div>
         <div class="rating-row">
           <span v-if="movie.rating != null" class="score tmdb">TMDB {{ Number(movie.rating).toFixed(1) }}</span>
@@ -388,8 +410,30 @@ async function onLookup(imdbId) {
           </div>
         </div>
         <dl class="facts">
-          <div class="fact"><dt>导演</dt><dd>{{ movie.director || '—' }}</dd></div>
-          <div class="fact"><dt>主演</dt><dd>{{ movie.actors.length ? movie.actors.join(' / ') : '—' }}</dd></div>
+          <div class="fact">
+            <dt>导演</dt>
+            <dd>
+              <template v-if="directorNames.length">
+                <template v-for="(n, i) in directorNames" :key="n">
+                  <a class="person-link" @click="emit('open-person', n)">{{ n }}</a><span v-if="i < directorNames.length - 1" class="p-sep"> / </span>
+                </template>
+              </template>
+              <template v-else>—</template>
+            </dd>
+          </div>
+          <div class="fact">
+            <dt>主演</dt>
+            <dd>
+              <template v-if="movie.actors.length">
+                <template v-for="(a, i) in movie.actors" :key="a">
+                  <a class="person-link" @click="emit('open-person', a)">{{ a }}</a><span v-if="i < movie.actors.length - 1" class="p-sep"> / </span>
+                </template>
+              </template>
+              <template v-else>—</template>
+            </dd>
+          </div>
+          <div class="fact"><dt>国家</dt><dd>{{ movie.countries?.length ? movie.countries.join(' / ') : '—' }}</dd></div>
+          <div class="fact"><dt>画质</dt><dd>{{ movie.quality || '—' }}</dd></div>
           <div class="fact">
             <dt>观看</dt>
             <dd class="watch-dd">
@@ -456,6 +500,21 @@ async function onLookup(imdbId) {
               class="w100"
             >
               <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <div class="form-row">
+          <el-form-item label="国家">
+            <el-select
+              v-model="form.countries"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="选择或输入国家/地区"
+              class="w100"
+            >
+              <el-option v-for="c in countryOptions" :key="c" :label="c" :value="c" />
             </el-select>
           </el-form-item>
         </div>
@@ -553,9 +612,20 @@ async function onLookup(imdbId) {
       <el-button type="primary" :loading="savingNote" @click="saveNote">保存</el-button>
     </template>
   </el-dialog>
+
+  <CollectionDialog
+    v-model="collectionVisible"
+    :collection-id="movie.collection_id"
+    @open-movie="id => emit('open-movie', id)"
+  />
 </template>
 
 <style scoped>
+.movie-dialog :deep(.el-dialog) {
+  border-radius: 10px;
+  border: 1px solid #2e241b;
+}
+
 .movie-dialog :deep(.el-dialog__body) {
   max-height: calc(100vh - 180px);
   overflow-y: auto;
@@ -586,8 +656,8 @@ async function onLookup(imdbId) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #1a2130;
-  color: #4a5568;
+  background: #221b14;
+  color: #6a5c4a;
   box-sizing: border-box;
 }
 
@@ -623,7 +693,7 @@ async function onLookup(imdbId) {
 
 .orig-title {
   font-size: 14px;
-  color: #8b93a5;
+  color: #9a8b74;
   margin-top: 2px;
   word-break: break-word;
 }
@@ -633,9 +703,9 @@ async function onLookup(imdbId) {
   margin-top: 8px;
   font-size: 12px;
   font-weight: 600;
-  color: #52d479;
-  background: rgba(82, 212, 121, 0.1);
-  border: 1px solid rgba(82, 212, 121, 0.35);
+  color: #93c78f;
+  background: rgba(147, 199, 143, 0.1);
+  border: 1px solid rgba(147, 199, 143, 0.35);
   padding: 2px 10px;
   border-radius: 20px;
 }
@@ -654,7 +724,7 @@ async function onLookup(imdbId) {
 
 .year {
   font-size: 16px;
-  color: #8b93a5;
+  color: #9a8b74;
   font-weight: 400;
 }
 
@@ -665,18 +735,28 @@ async function onLookup(imdbId) {
   margin: 10px 0 4px;
 }
 
+.collection-tag {
+  cursor: pointer;
+}
+
 .rating-row {
   display: flex;
-  gap: 18px;
+  gap: 20px;
   align-items: center;
   margin: 4px 0;
-  font-size: 15px;
-  font-weight: 700;
+}
+
+.rating-row .score {
+  font-family: 'Bebas Neue', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 21px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  line-height: 1;
 }
 
 .rating-history {
   margin: 6px 0;
-  border: 1px solid #232b3b;
+  border: 1px solid #2e241b;
   border-radius: 8px;
   padding: 8px 12px;
   max-height: 180px;
@@ -692,13 +772,13 @@ async function onLookup(imdbId) {
 
 .rh-title {
   font-size: 12px;
-  color: #8b93a5;
+  color: #9a8b74;
   font-weight: 600;
 }
 
 .rh-empty {
   font-size: 12px;
-  color: #6b7385;
+  color: #7d7160;
   text-align: center;
   padding: 8px 0;
 }
@@ -709,7 +789,7 @@ async function onLookup(imdbId) {
   justify-content: space-between;
   gap: 12px;
   padding: 6px 0;
-  border-top: 1px solid #1a2230;
+  border-top: 1px solid #221b14;
 }
 
 .rh-item:first-of-type {
@@ -728,20 +808,20 @@ async function onLookup(imdbId) {
 }
 
 .rh-rating {
-  color: #6fe3c1;
-  font-weight: 700;
-  font-size: 13px;
+  color: #8fd8b4;
+  font-family: 'Bebas Neue', 'Segoe UI', sans-serif;
+  font-size: 16px;
   white-space: nowrap;
 }
 
 .rh-time {
   font-size: 12px;
-  color: #6b7385;
+  color: #7d7160;
 }
 
 .rh-note {
   font-size: 12px;
-  color: #c0c7d4;
+  color: #cfc2ac;
   line-height: 1.6;
   margin-top: 2px;
   word-break: break-word;
@@ -754,11 +834,11 @@ async function onLookup(imdbId) {
 }
 
 .score.tmdb {
-  color: #ffc24a;
+  color: #e6c37a;
 }
 
 .score.douban {
-  color: #52d479;
+  color: #93c78f;
 }
 
 .my-rate {
@@ -770,13 +850,14 @@ async function onLookup(imdbId) {
 .my-rate-label {
   font-size: 13px;
   font-weight: 400;
-  color: #8b93a5;
+  color: #9a8b74;
 }
 
 .my-rate-num {
-  color: #6fe3c1;
-  font-size: 14px;
-  font-weight: 700;
+  color: #8fd8b4;
+  font-family: 'Bebas Neue', 'Segoe UI', sans-serif;
+  font-size: 19px;
+  line-height: 1;
 }
 
 .watch-dd {
@@ -798,12 +879,26 @@ async function onLookup(imdbId) {
 }
 
 .fact dt {
-  color: #8b93a5;
+  color: #9a8b74;
   flex: 0 0 3em;
 }
 
 .fact dd {
   margin: 0;
+}
+
+.person-link {
+  color: #cfc2ac;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.person-link:hover {
+  color: #e0a458;
+}
+
+.p-sep {
+  color: #4e4438;
 }
 
 .synopsis {
@@ -813,21 +908,21 @@ async function onLookup(imdbId) {
   margin: 8px 0;
   line-height: 1.8;
   font-size: 14px;
-  color: #c0c7d4;
+  color: #cfc2ac;
   white-space: pre-line;
 }
 
 .fileinfo {
   font-size: 12px;
-  color: #6b7385;
+  color: #7d7160;
   line-height: 1.7;
   word-break: break-all;
-  border-top: 1px solid #232b3b;
+  border-top: 1px solid #2e241b;
   padding-top: 10px;
 }
 
 .filename {
-  color: #8b93a5;
+  color: #9a8b74;
 }
 
 .edit-form {

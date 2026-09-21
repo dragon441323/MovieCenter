@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { buildSearchText } from './search.js'
+import { parseQuality } from './quality.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -37,6 +39,7 @@ db.exec(`
     director TEXT NOT NULL DEFAULT '',
     actors TEXT NOT NULL DEFAULT '[]',
     category TEXT NOT NULL DEFAULT '',
+    country TEXT NOT NULL DEFAULT '',
     path TEXT NOT NULL UNIQUE COLLATE NOCASE,
     video_file TEXT NOT NULL DEFAULT '',
     file_size INTEGER NOT NULL DEFAULT 0,
@@ -48,6 +51,10 @@ db.exec(`
     watch_count INTEGER NOT NULL DEFAULT 0,
     tmdb_id INTEGER,
     original_title TEXT NOT NULL DEFAULT '',
+    search_text TEXT NOT NULL DEFAULT '',
+    last_watched_at TEXT,
+    collection_id INTEGER,
+    collection_name TEXT NOT NULL DEFAULT '',
     missing INTEGER NOT NULL DEFAULT 0,
     last_scan_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -106,7 +113,34 @@ if (!movieCols.includes('original_title')) db.exec('ALTER TABLE movie ADD COLUMN
 if (!movieCols.includes('douban_rank')) db.exec('ALTER TABLE movie ADD COLUMN douban_rank INTEGER')
 if (!movieCols.includes('douban_id')) db.exec('ALTER TABLE movie ADD COLUMN douban_id TEXT')
 if (!movieCols.includes('douban_rating')) db.exec('ALTER TABLE movie ADD COLUMN douban_rating REAL')
+if (!movieCols.includes('search_text')) db.exec("ALTER TABLE movie ADD COLUMN search_text TEXT NOT NULL DEFAULT ''")
+if (!movieCols.includes('last_watched_at')) db.exec('ALTER TABLE movie ADD COLUMN last_watched_at TEXT')
+if (!movieCols.includes('collection_id')) db.exec('ALTER TABLE movie ADD COLUMN collection_id INTEGER')
+if (!movieCols.includes('collection_name')) db.exec("ALTER TABLE movie ADD COLUMN collection_name TEXT NOT NULL DEFAULT ''")
+if (!movieCols.includes('country')) db.exec("ALTER TABLE movie ADD COLUMN country TEXT NOT NULL DEFAULT ''")
+if (!movieCols.includes('quality')) db.exec("ALTER TABLE movie ADD COLUMN quality TEXT NOT NULL DEFAULT ''")
 db.exec('CREATE INDEX IF NOT EXISTS idx_movie_douban ON movie(douban_id)')
+db.exec('CREATE INDEX IF NOT EXISTS idx_movie_collection ON movie(collection_id)')
+
+const personCols = db.prepare('PRAGMA table_info(person)').all().map(c => c.name)
+if (!personCols.includes('biography')) db.exec("ALTER TABLE person ADD COLUMN biography TEXT NOT NULL DEFAULT ''")
+if (!personCols.includes('birthday')) db.exec("ALTER TABLE person ADD COLUMN birthday TEXT NOT NULL DEFAULT ''")
+if (!personCols.includes('place_of_birth')) db.exec("ALTER TABLE person ADD COLUMN place_of_birth TEXT NOT NULL DEFAULT ''")
+if (!personCols.includes('known_for')) db.exec("ALTER TABLE person ADD COLUMN known_for TEXT NOT NULL DEFAULT ''")
+if (!personCols.includes('credits_json')) db.exec("ALTER TABLE person ADD COLUMN credits_json TEXT NOT NULL DEFAULT ''")
+if (!personCols.includes('detail_at')) db.exec("ALTER TABLE person ADD COLUMN detail_at TEXT")
+
+const missingSearchText = db.prepare(
+  "SELECT id, title, original_title FROM movie WHERE search_text = ''"
+).all()
+if (missingSearchText.length) {
+  const upd = db.prepare('UPDATE movie SET search_text = ? WHERE id = ?')
+  db.exec('BEGIN')
+  for (const r of missingSearchText) {
+    upd.run(buildSearchText(r.title, r.original_title), r.id)
+  }
+  db.exec('COMMIT')
+}
 
 const legacyCategories = db.prepare(
   "SELECT id, category FROM movie WHERE category != '' AND category NOT LIKE '[%'"
@@ -117,6 +151,20 @@ if (legacyCategories.length) {
   for (const r of legacyCategories) {
     const arr = r.category.split('/').map(s => s.trim()).filter(Boolean)
     upd.run(JSON.stringify(arr), r.id)
+  }
+  db.exec('COMMIT')
+}
+
+const missingQuality = db.prepare(
+  "SELECT id, title, path, video_file FROM movie WHERE quality = ''"
+).all()
+if (missingQuality.length) {
+  const upd = db.prepare('UPDATE movie SET quality = ? WHERE id = ?')
+  db.exec('BEGIN')
+  for (const r of missingQuality) {
+    const videoName = String(r.video_file || '').split(/[\\/]/).pop()
+    const folder = String(r.path || '').split(/[\\/]/).pop()
+    upd.run(parseQuality(r.title, folder, videoName), r.id)
   }
   db.exec('COMMIT')
 }
