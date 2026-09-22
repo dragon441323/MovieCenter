@@ -227,6 +227,26 @@ db.exec(`
 const wishlistCols = db.prepare('PRAGMA table_info(wishlist)').all().map(c => c.name)
 if (!wishlistCols.includes('douban_rating')) db.exec('ALTER TABLE wishlist ADD COLUMN douban_rating REAL')
 
+// ---------- 自定义片单 ----------
+db.exec(`
+  CREATE TABLE IF NOT EXISTS playlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description TEXT NOT NULL DEFAULT '',
+    cover TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS playlist_movie (
+    playlist_id INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+    movie_id INTEGER NOT NULL REFERENCES movie(id) ON DELETE CASCADE,
+    sort INTEGER NOT NULL DEFAULT 0,
+    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (playlist_id, movie_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_playlist_movie_playlist ON playlist_movie(playlist_id, sort);
+`)
+
 // ---------- 增量扫描缓存（目录签名） ----------
 db.exec(`
   CREATE TABLE IF NOT EXISTS scan_cache (

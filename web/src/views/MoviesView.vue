@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Film, Search, Setting, StarFilled, Refresh, Close, DataAnalysis, HomeFilled, MagicStick, Present, Notebook } from '@element-plus/icons-vue'
@@ -8,12 +8,14 @@ import { useLibraryStore } from '../stores/library'
 import { api } from '../api'
 import { formatSize } from '../utils'
 import Logo from '../components/Logo.vue'
+import GlobalSearch from '../components/GlobalSearch.vue'
 import MovieCard from '../components/MovieCard.vue'
 import MovieDetail from '../components/MovieDetail.vue'
 import SettingsDialog from '../components/SettingsDialog.vue'
 
 const store = useLibraryStore()
 const router = useRouter()
+const route = useRoute()
 const { movies, total, page, pageSize, loading, meta, filters, scanPaths, scanning } = storeToRefs(store)
 
 const searchText = ref('')
@@ -281,6 +283,9 @@ function onUpdated(movie) {
 }
 
 onMounted(() => {
+  // 全局搜索的标签跳转：/movies?tag=xxx
+  const tag = String(route.query.tag || '').trim()
+  if (tag) store.setFilters({ tags: [tag] })
   store.fetchMovies()
   store.fetchMeta()
   store.fetchScanPaths()

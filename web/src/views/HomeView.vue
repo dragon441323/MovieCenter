@@ -3,11 +3,12 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
-import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present, Notebook, StarFilled } from '@element-plus/icons-vue'
+import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present, Notebook, StarFilled, Collection } from '@element-plus/icons-vue'
 import { useLibraryStore } from '../stores/library'
 import { api } from '../api'
 import { formatSize } from '../utils'
 import Logo from '../components/Logo.vue'
+import GlobalSearch from '../components/GlobalSearch.vue'
 import MovieCard from '../components/MovieCard.vue'
 import MovieDetail from '../components/MovieDetail.vue'
 import SettingsDialog from '../components/SettingsDialog.vue'
@@ -114,6 +115,7 @@ onMounted(() => {
       <el-button class="pick-btn" round :loading="picking" @click="pickTonight">
         <el-icon v-if="!picking"><MagicStick /></el-icon>&nbsp;今晚看什么
       </el-button>
+      <GlobalSearch @open-movie="onOpenMovie" />
       <el-tooltip content="扫描目录 / 设置" placement="bottom">
         <el-button circle @click="settingsVisible = true">
           <el-icon><Setting /></el-icon>
@@ -142,6 +144,13 @@ onMounted(() => {
         <span class="nc-body">
           <span class="nc-title">想看清单</span>
           <span class="nc-desc">同步豆瓣想看，到手自动对号</span>
+        </span>
+      </button>
+      <button class="nav-card" @click="$router.push('/playlists')">
+        <span class="nc-icon" style="--c: #c9a0e0"><el-icon :size="22"><Collection /></el-icon></span>
+        <span class="nc-body">
+          <span class="nc-title">我的片单</span>
+          <span class="nc-desc">自定义专题收藏</span>
         </span>
       </button>
       <button class="nav-card" @click="$router.push('/diary')">

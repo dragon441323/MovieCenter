@@ -60,9 +60,17 @@ const filteredCredits = computed(() => {
   let list = [...credits.value]
   if (creditTab.value === 'crew') list = list.filter(c => c.type === 'crew')
   else if (creditTab.value === 'cast') list = list.filter(c => c.type === 'cast')
+  else if (creditTab.value === 'director') {
+    list = list.filter(c => c.type === 'crew' && c.roles.includes('导演'))
+  }
   if (creditSort.value === 'pop') list.sort((a, b) => (b.vote_average ?? 0) - (a.vote_average ?? 0))
   return list
 })
+
+// 有执导作品时才显示「导演」页签
+const hasDirectorCredits = computed(() =>
+  credits.value.some(c => c.type === 'crew' && c.roles.includes('导演'))
+)
 
 const personMetaLine = computed(() => {
   const parts = []
@@ -203,6 +211,7 @@ function onUpdated(movie) {
             <div class="credits-ctrl">
               <el-radio-group v-model="creditTab" size="small">
                 <el-radio-button value="all">全部</el-radio-button>
+                <el-radio-button v-if="hasDirectorCredits" value="director">导演</el-radio-button>
                 <el-radio-button value="crew">幕后</el-radio-button>
                 <el-radio-button value="cast">出演</el-radio-button>
               </el-radio-group>

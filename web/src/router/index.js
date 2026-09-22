@@ -10,7 +10,8 @@ const router = createRouter({
     { path: '/blindbox', name: 'blindbox', component: () => import('../views/BlindBoxView.vue') },
     { path: '/stats', name: 'stats', component: () => import('../views/StatsView.vue') },
     { path: '/diary', name: 'diary', component: () => import('../views/DiaryView.vue') },
-    { path: '/wishlist', name: 'wishlist', component: () => import('../views/WishlistView.vue') }
+    { path: '/wishlist', name: 'wishlist', component: () => import('../views/WishlistView.vue') },
+    { path: '/playlists', name: 'playlists', component: () => import('../views/PlaylistsView.vue') }
   ],
   scrollBehavior(to, from, saved) {
     return saved || { top: 0 }

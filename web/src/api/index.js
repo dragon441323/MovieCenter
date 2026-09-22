@@ -99,5 +99,16 @@ export const api = {
   // 画质重识别
   reprobeQuality: id => request('POST', `/api/movies/${id}/reprobe`),
   // 扫描
-  triggerScanFull: () => request('POST', '/api/scan', { forceFull: true })
+  triggerScanFull: () => request('POST', '/api/scan', { forceFull: true }),
+  // 全局搜索
+  globalSearch: (q, limit = 8) => request('GET', '/api/search?' + toQuery({ q, limit })),
+  // 片单
+  playlists: () => request('GET', '/api/playlists'),
+  playlist: id => request('GET', `/api/playlists/${id}`),
+  createPlaylist: (name, description) => request('POST', '/api/playlists', { name, description }),
+  updatePlaylist: (id, data) => request('PUT', `/api/playlists/${id}`, data),
+  deletePlaylist: id => request('DELETE', `/api/playlists/${id}`),
+  addToPlaylist: (id, movieId) => request('POST', `/api/playlists/${id}/movies`, { movie_id: movieId }),
+  removeFromPlaylist: (id, movieId) => request('DELETE', `/api/playlists/${id}/movies/${movieId}`),
+  reorderPlaylist: (id, movieIds) => request('PUT', `/api/playlists/${id}/order`, { movie_ids: movieIds })
 }

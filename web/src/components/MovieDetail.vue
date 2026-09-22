@@ -325,6 +325,53 @@ async function exportNfo() {
   }
 }
 
+// 加入片单
+const playlistVisible = ref(false)
+const playlists = ref([])
+const playlistsLoading = ref(false)
+const newPlaylistName = ref('')
+const addingPlaylist = ref(false)
+
+async function openPlaylistDialog() {
+  playlistVisible.value = true
+  playlistsLoading.value = true
+  try {
+    const r = await api.playlists()
+    playlists.value = r.items
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    playlistsLoading.value = false
+  }
+}
+
+async function addTo(pl) {
+  try {
+    await api.addToPlaylist(pl.id, props.movie.id)
+    ElMessage.success(`已加入「${pl.name}」`)
+    playlistVisible.value = false
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+async function createAndAdd() {
+  const name = newPlaylistName.value.trim()
+  if (!name) return
+  addingPlaylist.value = true
+  try {
+    const created = await api.createPlaylist(name)
+    await api.addToPlaylist(created.id, props.movie.id)
+    ElMessage.success(`已创建「${name}」并加入`)
+    newPlaylistName.value = ''
+    playlistVisible.value = false
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    addingPlaylist.value = false
+  }
+}
+
 async function scrape(tmdbId) {
   scraping.value = true
   try {
@@ -660,6 +707,7 @@ async function onLookup(imdbId) {
       <div v-if="!editing">
         <el-button v-if="!movie.missing" type="primary" @click="play">立即播放</el-button>
         <el-button :loading="scraping" @click="scrape()">TMDB 同步</el-button>
+        <el-button @click="openPlaylistDialog">加入片单</el-button>
         <el-button @click="editing = true">编辑信息</el-button>
         <el-tooltip content="导出 movie.nfo 到影片文件夹（Kodi/Emby/Jellyfin 兼容）" placement="top">
           <el-button :loading="exportingNfo" @click="exportNfo">NFO</el-button>
@@ -703,6 +751,20 @@ async function onLookup(imdbId) {
     :collection-id="movie.collection_id"
     @open-movie="id => emit('open-movie', id)"
   />
+
+  <el-dialog v-model="playlistVisible" title="加入片单" width="420px" append-to-body>
+    <div v-loading="playlistsLoading">
+      <div v-if="!playlistsLoading && !playlists.length" class="pl-empty-tip">还没有片单，输入名称创建一个</div>
+      <div v-for="pl in playlists" :key="pl.id" class="pl-pick" @click="addTo(pl)">
+        <span class="pl-pick-name">{{ pl.name }}</span>
+        <span class="pl-pick-count">{{ pl.movie_count }} 部</span>
+      </div>
+      <div class="pl-new">
+        <el-input v-model="newPlaylistName" placeholder="新建片单名称" maxlength="50" @keyup.enter="createAndAdd" />
+        <el-button type="primary" :loading="addingPlaylist" @click="createAndAdd">新建并加入</el-button>
+      </div>
+    </div>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -783,6 +845,27 @@ async function onLookup(imdbId) {
   align-items: center;
   gap: 6px;
 }
+
+/* ---------- 加入片单 ---------- */
+.pl-empty-tip { font-size: 13px; color: #9a8b74; margin-bottom: 10px; }
+
+.pl-pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid #2e241b;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.pl-pick:hover { border-color: rgba(224, 164, 88, 0.55); background: #241d16; }
+
+.pl-pick-name { font-size: 14px; color: #ece3d2; }
+.pl-pick-count { font-size: 12px; color: #9a8b74; }
+
+.pl-new { display: flex; gap: 8px; margin-top: 12px; }
 
 .movie-dialog :deep(.el-dialog__body) {
   max-height: calc(100vh - 180px);

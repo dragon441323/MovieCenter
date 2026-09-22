@@ -21,6 +21,8 @@ import { diaryRouter } from './routes/diary.js'
 import { recommendRouter } from './routes/recommend.js'
 import { wishlistRouter } from './routes/wishlist.js'
 import { nfoRouter } from './routes/nfo.js'
+import { searchRouter } from './routes/search.js'
+import { playlistRouter } from './routes/playlists.js'
 import { scanAll, addDefaultMoviePaths } from './scanner.js'
 import { ffprobeAvailable } from './probe.js'
 import { ensureWeeklyBackup } from './backup.js'
@@ -77,6 +79,8 @@ app.use('/api/diary', diaryRouter)
 app.use('/api/recommend', recommendRouter)
 app.use('/api/wishlist', wishlistRouter)
 app.use('/api/nfo', nfoRouter)
+app.use('/api/search', searchRouter)
+app.use('/api/playlists', playlistRouter)
 app.use('/covers', express.static(COVERS_DIR))
 app.use('/persons', express.static(PERSONS_DIR))
 
