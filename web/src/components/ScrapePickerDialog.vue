@@ -175,4 +175,8 @@ function doLookup() {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+@media (max-width: 700px) {
+  .cand-grid { grid-template-columns: repeat(2, 1fr) !important; }
+}
 </style>

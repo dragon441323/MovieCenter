@@ -496,4 +496,31 @@ onMounted(load)
 .imp-tip { margin: 0 0 10px; font-size: 13px; line-height: 1.7; color: #9a8b74; }
 .imp-tip a { color: #e0a458; }
 .imp-result { margin-top: 10px; font-size: 13px; color: #8fd8b4; }
+
+/* ---------- 移动端顶栏 ---------- */
+@media (max-width: 700px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .topbar .search,
+  .topbar .sort,
+  .topbar .pick-btn {
+    width: auto;
+    flex: 1 1 auto;
+  }
+  .topbar .search { min-width: 140px; order: 10; flex-basis: 100%; }
+  .gsearch { width: 100% !important; order: 10; flex-basis: 100%; }
+  .spacer, .topbar-spacer { flex: 1 1 auto; }
+}
+
+/* ---------- 移动端 ---------- */
+@media (max-width: 700px) {
+  .wish-main { padding: 14px 12px 40px; }
+  .toolbar { flex-direction: column; align-items: stretch; }
+  .grid { grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .action-cards { grid-template-columns: 1fr; gap: 10px; }
+  .action-card { padding: 12px 14px; }
+}
 </style>

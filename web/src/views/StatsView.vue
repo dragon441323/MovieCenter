@@ -446,4 +446,14 @@ onMounted(async () => {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- 移动端 ---------- */
+@media (max-width: 700px) {
+  .stats-body { padding: 16px 12px 40px; }
+  .cards { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .num { font-size: 24px; }
+  .rc .rn { font-size: 22px; }
+  .fs-item img { width: 64px; height: 96px; }
+  .fs-item { width: 64px; }
+}
 </style>

@@ -824,4 +824,13 @@ async function cleanupMissing() {
   background: rgba(230, 162, 60, 0.08);
   border-radius: 6px;
 }
+
+/* ---------- 移动端 ---------- */
+@media (max-width: 700px) {
+  .settings-dialog :deep(.el-dialog) { top: 2vh !important; }
+  .settings-dialog :deep(.el-tabs__header) { margin-bottom: 10px; }
+  .set-row { flex-wrap: wrap; gap: 8px; }
+  .add-row { flex-direction: column; align-items: stretch; }
+  .path-item { flex-wrap: wrap; }
+}
 </style>

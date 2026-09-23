@@ -260,4 +260,31 @@ onMounted(load)
 .ops { display: flex; flex-direction: column; gap: 2px; align-items: flex-end; flex-shrink: 0; }
 
 .more { text-align: center; margin-top: 20px; }
+
+/* ---------- 移动端顶栏 ---------- */
+@media (max-width: 700px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .topbar .search,
+  .topbar .sort,
+  .topbar .pick-btn {
+    width: auto;
+    flex: 1 1 auto;
+  }
+  .topbar .search { min-width: 140px; order: 10; flex-basis: 100%; }
+  .gsearch { width: 100% !important; order: 10; flex-basis: 100%; }
+  .spacer, .topbar-spacer { flex: 1 1 auto; }
+}
+
+/* ---------- 移动端 ---------- */
+@media (max-width: 700px) {
+  .diary-main { padding: 16px 12px 40px; }
+  .entry { padding: 10px; gap: 10px; }
+  .cover { width: 46px; height: 69px; }
+  .t { font-size: 14px; }
+  .ops { flex-direction: row; align-items: center; }
+}
 </style>

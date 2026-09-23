@@ -225,4 +225,9 @@ const typeIcon = { movie: Film, person: User, playlist: Collection, tag: PriceTa
 }
 
 @media (max-width: 700px) { .gsearch { width: 180px; } }
+
+@media (max-width: 700px) {
+  .gsearch { width: 100% !important; flex-basis: 100%; order: 10; }
+  .gsearch-panel { position: fixed; left: 10px; right: 10px; top: 64px; width: auto; }
+}
 </style>

@@ -150,4 +150,8 @@ function openPart(p) {
   font-size: 12px;
   color: #9a8b74;
 }
+
+@media (max-width: 700px) {
+  .col-grid { grid-template-columns: repeat(3, 1fr) !important; }
+}
 </style>

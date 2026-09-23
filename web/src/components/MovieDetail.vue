@@ -1183,4 +1183,34 @@ async function onLookup(imdbId) {
 .w100 {
   width: 100%;
 }
+
+/* ---------- 移动端 ---------- */
+@media (max-width: 700px) {
+  .detail-body {
+    flex-direction: column;
+    gap: 16px;
+    min-height: auto;
+  }
+  .detail-cover {
+    flex: none;
+    min-width: 0;
+    max-width: 200px;
+    margin: 0 auto;
+    width: 55%;
+  }
+  .movie-dialog :deep(.el-dialog__body) {
+    max-height: calc(100vh - 130px);
+  }
+  .head-actions {
+    flex-direction: column-reverse;
+    gap: 6px;
+  }
+  .chips { justify-content: flex-start; }
+  .similar { margin-top: 10px; }
+  .sim-list { gap: 8px; }
+  .sim-item { width: 74px; }
+  .sim-item img, .sim-ph { width: 74px; height: 111px; }
+  .facts { grid-template-columns: 1fr; }
+  .fileinfo { font-size: 12px; word-break: break-all; }
+}
 </style>

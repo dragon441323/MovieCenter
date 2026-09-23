@@ -604,4 +604,22 @@ onBeforeUnmount(() => {
     justify-content: center;
   }
 }
+
+/* ---------- 移动端顶栏 ---------- */
+@media (max-width: 700px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .topbar .search,
+  .topbar .sort,
+  .topbar .pick-btn {
+    width: auto;
+    flex: 1 1 auto;
+  }
+  .topbar .search { min-width: 140px; order: 10; flex-basis: 100%; }
+  .gsearch { width: 100% !important; order: 10; flex-basis: 100%; }
+  .spacer, .topbar-spacer { flex: 1 1 auto; }
+}
 </style>

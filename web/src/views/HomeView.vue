@@ -945,4 +945,24 @@ onMounted(() => {
   gap: 12px;
   margin-top: 8px;
 }
+
+/* ---------- 移动端银幕 ---------- */
+@media (max-width: 700px) {
+  .screen :deep(.el-carousel) { height: 520px !important; }
+  .screen :deep(.el-carousel__container) { height: 520px !important; }
+  .slide-body {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 18px 16px;
+    gap: 14px;
+  }
+  .slide-poster { height: 240px; max-height: 240px; }
+  .slide-info { max-width: 100%; display: flex; flex-direction: column; align-items: center; }
+  .slide-synopsis { display: none; }
+  .slide-title { font-size: 22px; }
+  .daily-ticket { flex-direction: column; }
+  .daily-main { flex-direction: column; }
+  .daily-poster { width: 60%; margin: 0 auto; }
+}
 </style>
