@@ -152,6 +152,6 @@ function openPart(p) {
 }
 
 @media (max-width: 700px) {
-  .col-grid { grid-template-columns: repeat(3, 1fr) !important; }
+  .col-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
 }
 </style>

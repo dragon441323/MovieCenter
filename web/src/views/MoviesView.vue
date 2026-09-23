@@ -847,25 +847,27 @@ onMounted(() => {
 
 .wall {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  /* minmax(0,1fr)：纯 1fr 轨道的隐式最小宽是条目 min-content，
+     未刮削影片的超长文件名标题会把整列撑爆、挤扁其它卡片 */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 22px 16px;
 }
 
 @media (max-width: 1100px) {
   .wall {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 900px) {
   .wall {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 620px) {
   .wall {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

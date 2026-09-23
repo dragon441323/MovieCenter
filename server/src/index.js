@@ -2,7 +2,7 @@ import express from 'express'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { exec } from 'node:child_process'
+import { exec, execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { COVERS_DIR, PERSONS_DIR, db } from './db.js'
 import { movieRouter } from './routes/movies.js'
@@ -24,6 +24,7 @@ import { nfoRouter } from './routes/nfo.js'
 import { searchRouter } from './routes/search.js'
 import { playlistRouter } from './routes/playlists.js'
 import { streamRouter } from './routes/stream.js'
+import { killAllSessions } from './stream.js'
 import { scanAll, addDefaultMoviePaths } from './scanner.js'
 import { ffprobeAvailable } from './probe.js'
 import { ensureWeeklyBackup } from './backup.js'
@@ -31,6 +32,41 @@ import { matchWishlistToLibrary } from './wishlist.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 9527
+
+// ---------- 转码进程保底 ----------
+// 优雅退出（Ctrl+C / 停止服务）时终止所有 ffmpeg 转码子进程；
+// 强杀进程（taskkill /F、崩溃）不经过这里，由下方启动清扫兜底。
+process.on('SIGINT', () => { killAllSessions(); process.exit(0) })
+process.on('SIGTERM', () => { killAllSessions(); process.exit(0) })
+process.on('exit', () => { try { killAllSessions() } catch {} })
+
+// 启动时清扫上次异常退出遗留的孤儿 ffmpeg 与临时分段目录。
+// 必须在 app.listen 之前 await 完成：清扫若晚于监听，迟到的进程查杀 / 目录删除
+// 会误伤刚创建的转码会话（表现为启动后头几秒开播必失败）。
+function sweepOrphanTranscoders() {
+  return new Promise(resolve => {
+    let done = false
+    const finish = () => { if (!done) { done = true; resolve() } }
+    // 保底：查杀若卡死不能拖死服务器启动
+    setTimeout(finish, 10000).unref()
+    const tmpHls = path.join(os.tmpdir(), 'moviecenter-hls')
+    const rmLeftover = () => {
+      try { fs.rmSync(tmpHls, { recursive: true, force: true }) } catch { /* 句柄未释放则留给下次启动清理 */ }
+      finish()
+    }
+    if (process.platform === 'win32') {
+      const ps = `Get-CimInstance Win32_Process -Filter "Name='ffmpeg.exe'" | Where-Object { $_.CommandLine -like '*moviecenter-hls*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $_.ProcessId }`
+      execFile('powershell.exe', ['-NoProfile', '-Command', ps], { windowsHide: true }, (_err, stdout) => {
+        const pids = String(stdout || '').trim().split(/\s+/).filter(Boolean)
+        if (pids.length) console.log(`[stream] 已清理上次遗留的转码进程: PID ${pids.join(', ')}`)
+        setTimeout(rmLeftover, 500) // 等被杀进程的句柄释放后再删目录
+      })
+    } else {
+      try { execFile('pkill', ['-f', 'moviecenter-hls'], () => {}) } catch {}
+      setTimeout(rmLeftover, 300)
+    }
+  })
+}
 
 const app = express()
 app.use(express.json({ limit: '2mb' }))
@@ -104,6 +140,9 @@ app.use((err, req, res, next) => {
   if (err.code && String(err.code).startsWith('LIMIT_')) return res.status(400).json({ error: '上传的文件过大或无效' })
   res.status(500).json({ error: '服务器内部错误' })
 })
+
+// 端口监听前完成孤儿清扫：查杀/删除若晚于监听，会误伤刚创建的转码会话
+await sweepOrphanTranscoders()
 
 app.listen(PORT, async () => {
   console.log(`[moviecenter] server listening on http://localhost:${PORT}`)

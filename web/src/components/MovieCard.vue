@@ -66,6 +66,7 @@ const hue = computed(() => {
 <style scoped>
 .movie-card {
   cursor: pointer;
+  min-width: 0; /* 网格条目：不因超长标题的 min-content 撑爆所在列 */
 }
 
 .poster {

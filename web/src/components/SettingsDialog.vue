@@ -336,7 +336,7 @@ async function refreshDouban() {
   }
 }
 
-const doubanSync = ref({ running: false, total: 0, processed: 0, applied: 0, skipped: 0, failed: 0, current: null, aborted: false, message: null, errors: [] })
+const doubanSync = ref({ running: false, total: 0, processed: 0, applied: 0, skipped: 0, failed: 0, noMatch: null, noRating: 0, hadRating: 0, current: null, aborted: false, message: null, errors: [] })
 let doubanTimer = null
 
 async function startDoubanSync() {
@@ -601,9 +601,12 @@ async function cleanupMissing() {
               :status="doubanSync.running ? undefined : 'success'"
             />
             <div class="hint">
-              进度 {{ doubanSync.processed }}/{{ doubanSync.total }} · 已获取 {{ doubanSync.applied }} · 无匹配 {{ doubanSync.skipped }}
+              进度 {{ doubanSync.processed }}/{{ doubanSync.total }} · 新获取 {{ doubanSync.applied }}<template v-if="doubanSync.noMatch != null"> · 无匹配 {{ doubanSync.noMatch }} · 豆瓣暂无评分 {{ doubanSync.noRating }} · 已有评分 {{ doubanSync.hadRating }}</template><template v-else> · 跳过 {{ doubanSync.skipped }}（含已有评分等）</template>
               <template v-if="doubanSync.failed"> · 失败 {{ doubanSync.failed }}</template>
               <template v-if="doubanSync.running && doubanSync.current"> · 正在处理：{{ doubanSync.current }}</template>
+            </div>
+            <div v-if="doubanSync.noMatch > 0" class="hint">
+              无匹配：豆瓣上没找到与库内标题一致且年份差不超过 1 年的条目（常见于未刮削影片用文件名去搜、冷门片或译名差异），先刮削好片名再同步即可补上
             </div>
             <div v-if="doubanSync.message" class="warn">{{ doubanSync.message }}</div>
             <div v-if="doubanSync.errors?.length" class="batch-errors">

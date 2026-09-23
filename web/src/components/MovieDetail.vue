@@ -137,9 +137,11 @@ async function play() {
 const playChoiceVisible = ref(false)
 const playProbe = ref(null)
 const playProbing = ref(false)
+const subChoice = ref(-1)   // 在线播放字幕轨（-1 = 无字幕）
+const webSubIdx = ref(-1)   // 传给网页播放器的字幕轨
 
-async function openPlayChoice() {
-  playChoiceVisible.value = true
+// 探测编码 + 按记忆偏好初始化字幕选择（默认中文优先自动选轨；上次选了"无字幕"则默认关）
+async function probeForPlay() {
   playProbe.value = null
   playProbing.value = true
   try {
@@ -149,11 +151,30 @@ async function openPlayChoice() {
   } finally {
     playProbing.value = false
   }
+  let pref = null
+  try { pref = localStorage.getItem('mc_sub_pref') } catch {}
+  subChoice.value = pref === 'off' ? -1 : (playProbe.value?.defaultSub ?? -1)
+}
+
+async function openPlayChoice() {
+  playChoiceVisible.value = true
+  await probeForPlay()
+}
+
+// 字幕轨下拉文字：内嵌轨语言标记转中文
+const SUB_LANG_NAMES = { zho: '中文', chi: '中文', zh: '中文', eng: '英语', jpn: '日语', kor: '韩语' }
+function subLabel(s) {
+  if (s.kind === 'file') return `外挂 · ${s.label}`
+  const lang = SUB_LANG_NAMES[s.lang] || (s.lang ? s.lang.toUpperCase() : '')
+  return lang ? `${s.label} · ${lang}` : s.label
 }
 
 function choosePlay(mode) {
   playChoiceVisible.value = false
   if (mode === 'web') {
+    // 记住字幕开关偏好（只记开/关，具体轨道不记，下次仍按中文优先自动选）
+    try { localStorage.setItem('mc_sub_pref', subChoice.value === -1 ? 'off' : 'auto') } catch {}
+    webSubIdx.value = subChoice.value
     visible.value = false // 关闭详情弹窗，全屏播放
     openWebPlayer()
   } else play()
@@ -162,15 +183,7 @@ function choosePlay(mode) {
 // 供父组件调用：打开详情的同时弹出播放方式选择
 async function openWithPlay() {
   playChoiceVisible.value = true
-  playProbe.value = null
-  playProbing.value = true
-  try {
-    playProbe.value = await api.streamProbe(props.movie.id)
-  } catch {
-    playProbe.value = null
-  } finally {
-    playProbing.value = false
-  }
+  await probeForPlay()
 }
 
 defineExpose({ openWithPlay })
@@ -798,7 +811,7 @@ async function onLookup(imdbId) {
 
   <CollectionDialog
     v-model="collectionVisible"
-    :collection-id="movie.collection_id"
+    :collection-id="movie?.collection_id"
     @open-movie="id => emit('open-movie', id)"
   />
 
@@ -816,7 +829,7 @@ async function onLookup(imdbId) {
     </div>
   </el-dialog>
 
-  <VideoPlayer v-model="webPlayerVisible" :movie="movie" />
+  <VideoPlayer v-model="webPlayerVisible" :movie="movie" :sub-idx="webSubIdx" />
 
   <el-dialog v-model="playChoiceVisible" title="选择播放方式" width="480px" append-to-body>
     <div class="pc-probe" v-loading="playProbing">
@@ -827,6 +840,14 @@ async function onLookup(imdbId) {
       <template v-else-if="!playProbing">未安装 FFmpeg，无法探测编码</template>
       <template v-else>正在分析影片编码…</template>
     </div>
+    <div class="pc-subs" v-if="playProbe?.probe_ok && playProbe.subs?.length">
+      <div class="pc-subs-head">在线播放字幕</div>
+      <el-select v-model="subChoice" class="pc-subs-select">
+        <el-option label="无字幕" :value="-1" />
+        <el-option v-for="s in playProbe.subs" :key="s.idx" :value="s.idx" :label="subLabel(s)" />
+      </el-select>
+      <div class="pc-subs-tip">字幕将在服务器转码时烧进画面，播放中无法动态开关</div>
+    </div>
     <div class="pc-cards">
       <div class="pc-card" @click="choosePlay('web')">
         <div class="pc-icon"><el-icon :size="30"><Monitor /></el-icon></div>
@@ -834,7 +855,7 @@ async function onLookup(imdbId) {
           <div class="pc-title">在线播放</div>
           <div class="pc-desc">
             {{ playProbe?.mode === 'direct'
-              ? '原画质直连，浏览器直接播放'
+              ? (subChoice >= 0 ? '选了字幕：将转码 1080p 并烧录字幕' : '原画质直连，浏览器直接播放')
               : playProbe?.mode === 'transcode'
                 ? '服务器转码 1080p，手机平板可看'
                 : '手机 / 平板 / 电视浏览器均可' }}
@@ -1278,6 +1299,14 @@ async function onLookup(imdbId) {
   margin-bottom: 14px;
 }
 .pc-probe b { color: #cfc2ac; }
+
+/* 字幕选择 */
+.pc-subs {
+  margin: -2px 0 14px;
+}
+.pc-subs-head { font-size: 13px; color: #9a8b74; margin-bottom: 8px; }
+.pc-subs-select { width: 100%; }
+.pc-subs-tip { font-size: 12px; color: #6f6452; margin-top: 7px; }
 
 .pc-cards { display: flex; flex-direction: column; gap: 12px; }
 

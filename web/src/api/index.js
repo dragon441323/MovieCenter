@@ -111,9 +111,13 @@ export const api = {
   addToPlaylist: (id, movieId) => request('POST', `/api/playlists/${id}/movies`, { movie_id: movieId }),
   removeFromPlaylist: (id, movieId) => request('DELETE', `/api/playlists/${id}/movies/${movieId}`),
   reorderPlaylist: (id, movieIds) => request('PUT', `/api/playlists/${id}/order`, { movie_ids: movieIds }),
-  // 视频流
+  // 视频流（subIdx：-1 关字幕；null/undefined 默认中文；数字 = 指定字幕轨）
   streamProbe: id => request('GET', `/api/stream/${id}/probe`),
-  streamTranscode: id => request('POST', `/api/stream/${id}/transcode`),
+  streamTranscode: (id, startAt, subIdx) => request('POST', `/api/stream/${id}/transcode`, {
+    ...(startAt != null ? { startAt } : {}),
+    ...(subIdx != null ? { subIdx } : {})
+  }),
   streamHeartbeat: sid => request('POST', `/api/stream/session/${sid}/heartbeat`),
+  streamProgress: sid => request('GET', `/api/stream/session/${sid}/progress`),
   streamStop: sid => request('POST', `/api/stream/session/${sid}/stop`)
 }

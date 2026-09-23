@@ -348,6 +348,7 @@ export function startWishSync(uid, onApply) {
 
 const ratingSync = {
   running: false, total: 0, processed: 0, applied: 0, skipped: 0, failed: 0,
+  noMatch: 0, noRating: 0, hadRating: 0,
   current: null, startedAt: null, finishedAt: null, aborted: false, message: null, errors: []
 }
 
@@ -526,6 +527,7 @@ export function startRatingSync() {
   ).all()
   Object.assign(ratingSync, {
     running: true, total: movies.length, processed: 0, applied: 0, skipped: 0, failed: 0,
+    noMatch: 0, noRating: 0, hadRating: 0,
     current: null, startedAt: new Date().toISOString(), finishedAt: null,
     aborted: false, message: null, errors: []
   })
@@ -545,7 +547,9 @@ export function startRatingSync() {
       const failedBefore = ratingSync.failed
       try {
         if (m.douban_rating != null) {
+          // 已有评分：无需处理（单独计数，不算“无匹配”）
           ratingSync.skipped++
+          ratingSync.hadRating++
         } else if (m.douban_id && top250ById.has(String(m.douban_id))) {
           const cached = top250ById.get(String(m.douban_id))
           if (cached.rating) {
@@ -553,6 +557,7 @@ export function startRatingSync() {
             ratingSync.applied++
           } else {
             ratingSync.skipped++
+            ratingSync.noRating++
           }
         } else if (m.douban_id) {
           didNetwork = true
@@ -561,15 +566,19 @@ export function startRatingSync() {
             setRating.run(rating, String(m.douban_id), m.id)
             ratingSync.applied++
           } else {
+            // 豆瓣条目存在但暂无评分（未开分/冷门）
             ratingSync.skipped++
+            ratingSync.noRating++
           }
         } else {
           didNetwork = true
           searched = true
           const cand = await searchDoubanForMovie(m)
           if (!cand) {
+            // 真·无匹配：豆瓣搜索结果里没有标题一致 + 年份 ±1 的条目
             noMatch = true
             ratingSync.skipped++
+            ratingSync.noMatch++
           } else if (cand.rating != null) {
             setRating.run(cand.rating, cand.doubanId, m.id)
             ratingSync.applied++
@@ -577,6 +586,7 @@ export function startRatingSync() {
             // 搜索命中但豆瓣暂无评分：只记录 ID，下次同步直接按 ID 补
             setId.run(cand.doubanId, m.id)
             ratingSync.skipped++
+            ratingSync.noRating++
           }
         }
       } catch (err) {

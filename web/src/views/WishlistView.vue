@@ -456,6 +456,7 @@ onMounted(load)
   gap: 18px;
 }
 
+.wish-card { min-width: 0; }
 .wish-card .poster {
   position: relative; aspect-ratio: 2 / 3; border-radius: 8px; overflow: hidden;
   background: #1a1511; outline: 1px solid rgba(44,35,27,0.6);
@@ -519,7 +520,7 @@ onMounted(load)
 @media (max-width: 700px) {
   .wish-main { padding: 14px 12px 40px; }
   .toolbar { flex-direction: column; align-items: stretch; }
-  .grid { grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   .action-cards { grid-template-columns: 1fr; gap: 10px; }
   .action-card { padding: 12px 14px; }
 }

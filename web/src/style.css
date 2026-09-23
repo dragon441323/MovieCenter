@@ -2,6 +2,12 @@ html, body, #app {
   height: 100%;
 }
 
+/* 全屏播放器打开时锁定页面滚动（桌面滚动条消失 + 手机触摸不再拖动页面） */
+html.mc-scroll-lock {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
+
 /* PWA standalone（iPhone 刘海屏安全区） */
 @media (display-mode: standalone) {
   body {

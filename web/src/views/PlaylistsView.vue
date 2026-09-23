@@ -445,7 +445,7 @@ watch(viewId, id => {
 @media (max-width: 700px) {
   .pl-main { padding: 14px 12px 40px; }
   .pl-grid { grid-template-columns: 1fr; }
-  .detail-grid { grid-template-columns: repeat(3, 1fr); }
+  .detail-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .pl-detail-head { flex-wrap: wrap; gap: 8px; }
   .pl-detail-title { font-size: 20px; }
 }

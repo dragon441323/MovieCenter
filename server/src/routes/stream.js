@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { db } from '../db.js'
 import {
   probeMovieCodecs, canDirectPlay, directStream,
-  startTranscode, getSession, touchSession, stopSession, serveHlsPart, transcodeStats
+  startTranscode, getSession, touchSession, stopSession, serveHlsPart, sessionProgress, transcodeStats
 } from '../stream.js'
 
 export const streamRouter = Router()
@@ -38,9 +38,20 @@ streamRouter.get('/:id/probe', async (req, res) => {
     profile: info.profile,
     width: info.width,
     height: info.height,
+    pix_fmt: info.pix_fmt,
+    hdr: !!info.hdr,
+    duration: info.duration,
+    // 可烧录字幕（内嵌 + 外挂），供播放方式弹窗选择
+    subs: (info.subs || []).map(s => ({
+      idx: s.idx,
+      kind: s.kind,
+      label: s.label,
+      lang: s.lang || ''
+    })),
+    defaultSub: info.defaultSub ?? -1,
     note: direct
       ? '浏览器可直接播放，原画质直连'
-      : `${info.video_codec}${info.audio_codec ? ' / ' + info.audio_codec : ''} 浏览器不支持，服务器转码为 1080p H.264`
+      : `${info.video_codec}${info.audio_codec ? ' / ' + info.audio_codec : ''}${info.hdr ? ' HDR' : ''} 浏览器不支持，服务器转码为 1080p H.264${info.hdr ? '（HDR→SDR）' : ''}`
   })
 })
 
@@ -56,8 +67,9 @@ streamRouter.post('/:id/transcode', async (req, res) => {
   const id = parseId(req.params.id)
   if (!id) return res.status(400).json({ error: '无效的 ID' })
   try {
-    const r = await startTranscode(id)
-    res.json({ sid: r.sid, stats: transcodeStats() })
+    // subIdx：-1 关字幕；null/undefined 用默认（中文优先）；数字 = probe 返回的 subs[].idx
+    const r = await startTranscode(id, req.body?.startAt, req.body?.subIdx)
+    res.json({ sid: r.sid, startAt: r.startAt, stats: transcodeStats() })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
   }
@@ -68,6 +80,13 @@ streamRouter.post('/session/:sid/heartbeat', (req, res) => {
   const s = touchSession(req.params.sid)
   if (!s) return res.status(404).json({ error: '会话已结束' })
   res.json({ ok: true, stats: transcodeStats() })
+})
+
+/** 会话转码进度（播放器进度条上的"已转码"区域）。注意要放在 /:file 通配路由之前 */
+streamRouter.get('/session/:sid/progress', (req, res) => {
+  const p = sessionProgress(req.params.sid)
+  if (!p) return res.status(404).json({ error: '会话已结束' })
+  res.json(p)
 })
 
 /** 主动结束会话 */
