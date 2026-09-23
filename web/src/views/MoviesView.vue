@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
@@ -22,6 +22,7 @@ const searchText = ref('')
 const sortValue = ref(`${filters.value.sort}:${filters.value.order}`)
 const detailVisible = ref(false)
 const detailMovie = ref(null)
+const detailRef = ref(null)
 const settingsVisible = ref(false)
 const top250Count = ref(0)
 const picking = ref(false)
@@ -255,11 +256,11 @@ async function onOpenMovie(id) {
 }
 
 async function playMovie(movie) {
-  try {
-    await api.playMovie(movie.id)
-  } catch (e) {
-    ElMessage.error(e.message)
-  }
+  // 打开详情并弹出播放方式选择（在线/本地）
+  detailMovie.value = movie
+  detailVisible.value = true
+  await nextTick()
+  detailRef.value?.openWithPlay()
 }
 
 async function pickTonight() {
@@ -547,7 +548,7 @@ onMounted(() => {
       />
     </footer>
 
-    <MovieDetail v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
+    <MovieDetail ref="detailRef" v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
     <SettingsDialog v-model="settingsVisible" />
   </div>
 </template>

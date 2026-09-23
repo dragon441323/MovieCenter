@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
@@ -20,6 +20,7 @@ const { rows, scanPaths, scanning } = storeToRefs(store)
 const stats = ref({ totals: { total: 0, watched: 0, watch_total: 0, favorites: 0, my_rated: 0, top250: 0, total_size: 0 } })
 const detailVisible = ref(false)
 const detailMovie = ref(null)
+const detailRef = ref(null)
 const settingsVisible = ref(false)
 const picking = ref(false)
 const projectorOn = ref(false)
@@ -65,11 +66,11 @@ async function onOpenMovie(id) {
 }
 
 async function playMovie(movie) {
-  try {
-    await api.playMovie(movie.id)
-  } catch (e) {
-    ElMessage.error(e.message)
-  }
+  // 打开详情并弹出播放方式选择（在线/本地）
+  detailMovie.value = movie
+  detailVisible.value = true
+  await nextTick()
+  detailRef.value?.openWithPlay()
 }
 
 async function pickTonight() {
@@ -296,7 +297,7 @@ onMounted(() => {
       </template>
     </main>
 
-    <MovieDetail v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
+    <MovieDetail ref="detailRef" v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
     <SettingsDialog v-model="settingsVisible" />
   </div>
 </template>

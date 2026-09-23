@@ -110,5 +110,10 @@ export const api = {
   deletePlaylist: id => request('DELETE', `/api/playlists/${id}`),
   addToPlaylist: (id, movieId) => request('POST', `/api/playlists/${id}/movies`, { movie_id: movieId }),
   removeFromPlaylist: (id, movieId) => request('DELETE', `/api/playlists/${id}/movies/${movieId}`),
-  reorderPlaylist: (id, movieIds) => request('PUT', `/api/playlists/${id}/order`, { movie_ids: movieIds })
+  reorderPlaylist: (id, movieIds) => request('PUT', `/api/playlists/${id}/order`, { movie_ids: movieIds }),
+  // 视频流
+  streamProbe: id => request('GET', `/api/stream/${id}/probe`),
+  streamTranscode: id => request('POST', `/api/stream/${id}/transcode`),
+  streamHeartbeat: sid => request('POST', `/api/stream/session/${sid}/heartbeat`),
+  streamStop: sid => request('POST', `/api/stream/session/${sid}/stop`)
 }

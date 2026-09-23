@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, HomeFilled, Film, VideoPlay, Refresh } from '@element-plus/icons-vue'
@@ -16,6 +16,7 @@ const unwatchedOnly = ref(true)
 const byTaste = ref(true)
 const detailVisible = ref(false)
 const detailMovie = ref(null)
+const detailRef = ref(null)
 const pool = ref([])
 let flickerTimer = null
 
@@ -106,11 +107,11 @@ function openDetail() {
 
 async function playNow() {
   if (!current.value) return
-  try {
-    await api.playMovie(current.value.id)
-  } catch (e) {
-    ElMessage.error(e.message)
-  }
+  // 打开详情并弹出播放方式选择（在线/本地）
+  detailMovie.value = current.value
+  detailVisible.value = true
+  await nextTick()
+  detailRef.value?.openWithPlay()
 }
 
 function onUpdated(movie) {
@@ -262,7 +263,7 @@ onBeforeUnmount(() => {
       </div>
     </main>
 
-    <MovieDetail v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
+    <MovieDetail ref="detailRef" v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
   </div>
 </template>
 

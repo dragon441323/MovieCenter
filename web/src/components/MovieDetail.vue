@@ -1,12 +1,13 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Star, StarFilled, Film, CircleCheck, CircleCheckFilled, Plus, CaretRight, Refresh } from '@element-plus/icons-vue'
+import { Star, StarFilled, Film, CircleCheck, CircleCheckFilled, Plus, CaretRight, Refresh, ArrowDown, Monitor } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatSize } from '../utils'
 import { useLibraryStore } from '../stores/library'
 import ScrapePickerDialog from './ScrapePickerDialog.vue'
 import CollectionDialog from './CollectionDialog.vue'
+import VideoPlayer from './VideoPlayer.vue'
 
 const props = defineProps({
   movie: { type: Object, required: true }
@@ -130,6 +131,55 @@ async function play() {
   } catch (e) {
     ElMessage.error(e.message)
   }
+}
+
+// 播放方式选择弹窗
+const playChoiceVisible = ref(false)
+const playProbe = ref(null)
+const playProbing = ref(false)
+
+async function openPlayChoice() {
+  playChoiceVisible.value = true
+  playProbe.value = null
+  playProbing.value = true
+  try {
+    playProbe.value = await api.streamProbe(props.movie.id)
+  } catch {
+    playProbe.value = null
+  } finally {
+    playProbing.value = false
+  }
+}
+
+function choosePlay(mode) {
+  playChoiceVisible.value = false
+  if (mode === 'web') {
+    visible.value = false // 关闭详情弹窗，全屏播放
+    openWebPlayer()
+  } else play()
+}
+
+// 供父组件调用：打开详情的同时弹出播放方式选择
+async function openWithPlay() {
+  playChoiceVisible.value = true
+  playProbe.value = null
+  playProbing.value = true
+  try {
+    playProbe.value = await api.streamProbe(props.movie.id)
+  } catch {
+    playProbe.value = null
+  } finally {
+    playProbing.value = false
+  }
+}
+
+defineExpose({ openWithPlay })
+
+// 网页播放器（直连/服务器转码）
+const webPlayerVisible = ref(false)
+
+function openWebPlayer() {
+  webPlayerVisible.value = true
 }
 
 // 评分历史
@@ -705,7 +755,7 @@ async function onLookup(imdbId) {
 
     <template #footer>
       <div v-if="!editing">
-        <el-button v-if="!movie.missing" type="primary" @click="play">立即播放</el-button>
+        <el-button v-if="!movie.missing" type="primary" @click="openPlayChoice">立即播放</el-button>
         <el-button :loading="scraping" @click="scrape()">TMDB 同步</el-button>
         <el-button @click="openPlaylistDialog">加入片单</el-button>
         <el-button @click="editing = true">编辑信息</el-button>
@@ -762,6 +812,41 @@ async function onLookup(imdbId) {
       <div class="pl-new">
         <el-input v-model="newPlaylistName" placeholder="新建片单名称" maxlength="50" @keyup.enter="createAndAdd" />
         <el-button type="primary" :loading="addingPlaylist" @click="createAndAdd">新建并加入</el-button>
+      </div>
+    </div>
+  </el-dialog>
+
+  <VideoPlayer v-model="webPlayerVisible" :movie="movie" />
+
+  <el-dialog v-model="playChoiceVisible" title="选择播放方式" width="480px" append-to-body>
+    <div class="pc-probe" v-loading="playProbing">
+      <template v-if="playProbe?.probe_ok">
+        影片编码：<b>{{ playProbe.video_codec }}{{ playProbe.audio_codec ? ' / ' + playProbe.audio_codec : '' }}</b>
+        <template v-if="playProbe.width"> · {{ playProbe.height }}p</template>
+      </template>
+      <template v-else-if="!playProbing">未安装 FFmpeg，无法探测编码</template>
+      <template v-else>正在分析影片编码…</template>
+    </div>
+    <div class="pc-cards">
+      <div class="pc-card" @click="choosePlay('web')">
+        <div class="pc-icon"><el-icon :size="30"><Monitor /></el-icon></div>
+        <div class="pc-body">
+          <div class="pc-title">在线播放</div>
+          <div class="pc-desc">
+            {{ playProbe?.mode === 'direct'
+              ? '原画质直连，浏览器直接播放'
+              : playProbe?.mode === 'transcode'
+                ? '服务器转码 1080p，手机平板可看'
+                : '手机 / 平板 / 电视浏览器均可' }}
+          </div>
+        </div>
+      </div>
+      <div class="pc-card" @click="choosePlay('local')">
+        <div class="pc-icon local"><el-icon :size="30"><CaretRight /></el-icon></div>
+        <div class="pc-body">
+          <div class="pc-title">本地播放</div>
+          <div class="pc-desc">调用 PotPlayer，支持全部编码与音轨</div>
+        </div>
       </div>
     </div>
   </el-dialog>
@@ -1182,6 +1267,57 @@ async function onLookup(imdbId) {
 
 .w100 {
   width: 100%;
+}
+
+/* ---------- 播放方式选择 ---------- */
+.pc-probe {
+  font-size: 13px;
+  color: #9a8b74;
+  padding: 8px 2px 14px;
+  border-bottom: 1px solid #241d16;
+  margin-bottom: 14px;
+}
+.pc-probe b { color: #cfc2ac; }
+
+.pc-cards { display: flex; flex-direction: column; gap: 12px; }
+
+.pc-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: #1a1511;
+  border: 1px solid #2e241b;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.2s, background 0.2s;
+}
+.pc-card:hover {
+  border-color: rgba(224, 164, 88, 0.55);
+  background: #201a13;
+  transform: translateY(-2px);
+}
+
+.pc-icon {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(224, 164, 88, 0.14);
+  color: #e0a458;
+}
+.pc-icon.local { background: rgba(154, 171, 110, 0.14); color: #9aab6e; }
+
+.pc-body { flex: 1; min-width: 0; }
+.pc-title { font-size: 15px; font-weight: 700; color: #ece3d2; }
+.pc-desc { margin-top: 3px; font-size: 12.5px; color: #9a8b74; line-height: 1.5; }
+
+@media (max-width: 700px) {
+  .pc-cards { gap: 10px; }
+  .pc-card { padding: 13px; }
 }
 
 /* ---------- 移动端 ---------- */

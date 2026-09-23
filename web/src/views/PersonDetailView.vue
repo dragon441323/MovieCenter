@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
@@ -22,6 +22,7 @@ const creditTab = ref('all')
 const creditSort = ref('date')
 const detailVisible = ref(false)
 const detailMovie = ref(null)
+const detailRef = ref(null)
 
 const name = computed(() => String(route.query.name || '').trim())
 
@@ -95,11 +96,11 @@ async function onOpenMovie(id) {
 }
 
 async function playMovie(movie) {
-  try {
-    await api.playMovie(movie.id)
-  } catch (e) {
-    ElMessage.error(e.message)
-  }
+  // 打开详情并弹出播放方式选择（在线/本地）
+  detailMovie.value = movie
+  detailVisible.value = true
+  await nextTick()
+  detailRef.value?.openWithPlay()
 }
 
 function goPerson(n) {
@@ -247,7 +248,7 @@ function onUpdated(movie) {
       </template>
     </main>
 
-    <MovieDetail v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
+    <MovieDetail ref="detailRef" v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
   </div>
 </template>
 

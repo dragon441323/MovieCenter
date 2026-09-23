@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, HomeFilled, Plus, Delete, Edit, Collection } from '@element-plus/icons-vue'
@@ -16,6 +16,7 @@ const loading = ref(false)
 const current = ref(null)      // { playlist, movies }
 const detailVisible = ref(false)
 const detailMovie = ref(null)
+const detailRef = ref(null)
 
 // 新建/编辑对话框
 const editVisible = ref(false)
@@ -119,6 +120,14 @@ async function removeFromList(movie) {
 function openDetail(movie) {
   detailMovie.value = movie
   detailVisible.value = true
+}
+
+async function playMovie(movie) {
+  // 打开详情并弹出播放方式选择（在线/本地）
+  detailMovie.value = movie
+  detailVisible.value = true
+  await nextTick()
+  detailRef.value?.openWithPlay()
 }
 
 async function onOpenMovie(id) {
@@ -228,7 +237,7 @@ watch(viewId, id => {
         <div class="detail-grid">
           <div v-for="(m, i) in current.movies" :key="m.id" class="detail-cell">
             <span class="ordinal font-display">{{ i + 1 }}</span>
-            <MovieCard :movie="m" @open="openDetail" @play="p => api.playMovie(p.id).catch(e => ElMessage.error(e.message))" />
+            <MovieCard :movie="m" @open="openDetail" @play="playMovie" />
             <el-button class="cell-remove" link type="danger" size="small" @click="removeFromList(m)">
               <el-icon><Delete /></el-icon>&nbsp;移出
             </el-button>
@@ -237,7 +246,7 @@ watch(viewId, id => {
       </template>
     </main>
 
-    <MovieDetail v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" />
+    <MovieDetail ref="detailRef" v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" />
 
     <el-dialog v-model="editVisible" :title="editForm.id ? '编辑片单' : '新建片单'" width="460px">
       <el-form label-width="60px">

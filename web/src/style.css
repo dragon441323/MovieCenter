@@ -2,6 +2,14 @@ html, body, #app {
   height: 100%;
 }
 
+/* PWA standalone（iPhone 刘海屏安全区） */
+@media (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
 body {
   margin: 0;
   background: radial-gradient(1400px 900px at 50% -12%, #1b1410 0%, #100e0c 58%);
