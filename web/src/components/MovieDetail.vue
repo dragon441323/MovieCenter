@@ -6,6 +6,7 @@ import { api } from '../api'
 import { formatSize } from '../utils'
 import { useLibraryStore } from '../stores/library'
 import ScrapePickerDialog from './ScrapePickerDialog.vue'
+import DoubanPickerDialog from './DoubanPickerDialog.vue'
 import CollectionDialog from './CollectionDialog.vue'
 import VideoPlayer from './VideoPlayer.vue'
 
@@ -342,6 +343,72 @@ const displayOriginal = computed(() => {
 
 const scraping = ref(false)
 const pickerVisible = ref(false)
+// 豆瓣手动匹配
+const doubanPickerVisible = ref(false)
+const doubanCandidates = ref([])
+const doubanSearching = ref(false)
+const doubanBinding = ref(false)
+
+async function onDoubanSearch(q) {
+  doubanSearching.value = true
+  try {
+    const r = await api.doubanSearch(props.movie.id, q)
+    doubanCandidates.value = r.candidates
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    doubanSearching.value = false
+  }
+}
+
+async function onDoubanPick(c) {
+  return onDoubanBind(c.doubanId)
+}
+
+async function onDoubanBind(doubanId) {
+  doubanBinding.value = true
+  try {
+    const r = await api.doubanBind(props.movie.id, doubanId)
+    ElMessage.success(r.douban_rating != null ? `豆瓣评分已更新：${Number(r.douban_rating).toFixed(1)}` : '已绑定豆瓣条目（该条目暂无评分）')
+    doubanPickerVisible.value = false
+    emit('updated', { ...props.movie, douban_id: r.douban_id, douban_rating: r.douban_rating })
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    doubanBinding.value = false
+  }
+}
+
+/** 「数据同步」下拉菜单入口 */
+const syncingData = ref(false)
+
+async function onSyncCommand(cmd) {
+  if (cmd === 'tmdb') return scrape()
+  if (cmd === 'douban-manual') {
+    doubanCandidates.value = []
+    doubanPickerVisible.value = true
+    return
+  }
+  if (cmd === 'douban') {
+    syncingData.value = true
+    try {
+      const r = await api.doubanSyncMovie(props.movie.id)
+      if (r.matched) {
+        ElMessage.success(r.douban_rating != null ? `豆瓣评分已同步：${Number(r.douban_rating).toFixed(1)}` : '已匹配豆瓣条目（暂无评分）')
+        emit('updated', { ...props.movie, douban_id: r.douban_id, douban_rating: r.douban_rating })
+      } else {
+        // 自动匹配失败 → 引导手动
+        ElMessage.warning('自动匹配没找到，试试手动匹配')
+        doubanCandidates.value = []
+        doubanPickerVisible.value = true
+      }
+    } catch (e) {
+      ElMessage.error(e.message)
+    } finally {
+      syncingData.value = false
+    }
+  }
+}
 const candidates = ref([])
 const collectionVisible = ref(false)
 const searching = ref(false)
@@ -781,9 +848,20 @@ async function onLookup(imdbId) {
     </div>
 
     <template #footer>
-      <div v-if="!editing">
+      <div v-if="!editing" class="detail-actions">
         <el-button v-if="!movie.missing" type="primary" @click="openPlayChoice">立即播放</el-button>
-        <el-button :loading="scraping" @click="scrape()">TMDB 同步</el-button>
+        <el-dropdown trigger="click" @command="onSyncCommand">
+          <el-button :loading="syncingData">
+            数据同步<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="tmdb" :disabled="syncingData">同步 TMDB 信息</el-dropdown-item>
+              <el-dropdown-item command="douban" :disabled="syncingData">同步豆瓣评分</el-dropdown-item>
+              <el-dropdown-item command="douban-manual" divided :disabled="syncingData">手动匹配豆瓣…</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button @click="openPlaylistDialog">加入片单</el-button>
         <el-button @click="editing = true">编辑信息</el-button>
         <el-tooltip content="导出 movie.nfo 到影片文件夹（Kodi/Emby/Jellyfin 兼容）" placement="top">
@@ -806,6 +884,16 @@ async function onLookup(imdbId) {
     @pick="c => scrape(c.tmdb_id)"
     @search="onManualSearch"
     @lookup="onLookup"
+  />
+
+  <DoubanPickerDialog
+    v-model="doubanPickerVisible"
+    :candidates="doubanCandidates"
+    :searching="doubanSearching"
+    :binding="doubanBinding"
+    @pick="onDoubanPick"
+    @search="onDoubanSearch"
+    @bind="onDoubanBind"
   />
 
   <el-dialog v-model="noteDialogVisible" title="写评价" width="480px" append-to-body>
@@ -895,6 +983,20 @@ async function onLookup(imdbId) {
 </template>
 
 <style scoped>
+/* 底部操作区：下拉按钮被 el-dropdown 包裹后不再命中 .el-button + .el-button 的默认间距，手动补齐统一间隔 */
+.detail-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.detail-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.detail-actions .el-dropdown {
+  line-height: 1;
+}
+
 .movie-dialog :deep(.el-dialog) {
   border-radius: 10px;
   border: 1px solid #2e241b;

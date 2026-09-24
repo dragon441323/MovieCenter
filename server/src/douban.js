@@ -386,7 +386,7 @@ function extractJsonAfter(html, marker) {
  * 豆瓣电影搜索（search.douban.com 页面内嵌 window.__DATA__ JSON）。
  * 返回候选列表：{ doubanId, zh, orig, year, aliases, rating }（已过滤剧集）。
  */
-async function searchDoubanPage(query) {
+export async function searchDoubanPage(query) {
   const url = `https://search.douban.com/movie/subject_search?search_text=${encodeURIComponent(query)}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 20000)
@@ -444,7 +444,8 @@ async function searchDoubanPage(query) {
   }
 }
 
-async function fetchSubjectRating(doubanId) {
+/** 取豆瓣条目评分（m.douban.com rexxar 接口）；无评分/条目不存在返回 null。 */
+export async function fetchSubjectRating(doubanId) {
   const url = `https://m.douban.com/rexxar/api/v2/movie/${doubanId}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 15000)
@@ -479,7 +480,7 @@ async function searchWithRetry(query) {
 }
 
 /** 用片名在豆瓣搜索并挑出与库内电影匹配的条目（中文/原名/港台别名归一化一致 + 年份容差 ±1）。 */
-async function searchDoubanForMovie(movie) {
+export async function searchDoubanForMovie(movie) {
   const mt = normalizeTitle(movie.title)
   const mo = normalizeTitle(movie.original_title)
   const queries = [...new Set(

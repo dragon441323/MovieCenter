@@ -61,6 +61,10 @@ export const api = {
   doubanRefresh: () => request('POST', '/api/douban/refresh'),
   doubanSyncRatings: () => request('POST', '/api/douban/ratings'),
   doubanSyncStatus: () => request('GET', '/api/douban/ratings'),
+  // 豆瓣手动匹配
+  doubanSearch: (movieId, query) => request('POST', '/api/douban/search', { movieId, query }),
+  doubanBind: (movieId, doubanId) => request('POST', '/api/douban/bind', { movieId, doubanId }),
+  doubanSyncMovie: movieId => request('POST', '/api/douban/sync-movie', { movieId }),
   movieRows: () => request('GET', '/api/movies/rows'),
   pickMovie: (params = {}) => request('GET', '/api/movies/pick?' + toQuery(params)),
   dailyMovie: () => request('GET', '/api/movies/daily'),
