@@ -106,6 +106,14 @@ export async function getMovieDetails(tmdbId) {
   return tmdbFetch(`/movie/${tmdbId}`, { append_to_response: 'credits' })
 }
 
+/** 影讯详情：演职员 + 预告片 + 时长一次拉全 */
+export async function getNewsMovieDetails(tmdbId) {
+  return tmdbFetch(`/movie/${tmdbId}`, {
+    append_to_response: 'credits,videos',
+    include_video_language: 'zh-CN,en,null'
+  })
+}
+
 export async function getCollection(collectionId) {
   return tmdbFetch(`/collection/${collectionId}`)
 }

@@ -15,6 +15,7 @@ import { playerRouter } from './routes/player.js'
 import { personRouter } from './routes/person.js'
 import { doubanRouter } from './routes/douban.js'
 import { systemRouter } from './routes/system.js'
+import { newsRouter } from './routes/news.js'
 import { statsRouter } from './routes/stats.js'
 import { collectionRouter } from './routes/collections.js'
 import { diaryRouter } from './routes/diary.js'
@@ -120,6 +121,7 @@ app.use('/api/nfo', nfoRouter)
 app.use('/api/search', searchRouter)
 app.use('/api/playlists', playlistRouter)
 app.use('/api/stream', streamRouter)
+app.use('/api/news', newsRouter)
 app.use('/covers', express.static(COVERS_DIR))
 app.use('/persons', express.static(PERSONS_DIR))
 

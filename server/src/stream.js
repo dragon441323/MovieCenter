@@ -91,6 +91,7 @@ export async function probeMovieCodecs(movieId) {
     try { info = JSON.parse(out) } catch { return null }
     const video = (info.streams || []).find(s => s.codec_type === 'video')
     const audio = (info.streams || []).find(s => s.codec_type === 'audio')
+    const audioStreams = (info.streams || []).filter(s => s.codec_type === 'audio')
     const subStreams = (info.streams || []).filter(s => s.codec_type === 'subtitle')
     const transfer = video?.color_transfer || ''
     cached = {
@@ -105,6 +106,13 @@ export async function probeMovieCodecs(movieId) {
       audio_codec: audio?.codec_name || '',
       duration: parseFloat(info?.format?.duration) || 0,
       videoFile: row.video_file,
+      // 全部音轨（rel = 文件内第几条音频流，转码 -map 0:a:N 用）
+      audioStreams: audioStreams.map((s, i) => ({
+        rel: i,
+        codec: s.codec_name || '',
+        channels: s.channels || 0,
+        lang: s.tags?.language || ''
+      })),
       // 内嵌字幕流：rel = 文件内第几条字幕流（[0:s:rel] 用），abs = 绝对流序号（subtitles=si= 用）
       embeddedSubs: subStreams.map((s, i) => ({
         rel: i,
@@ -126,7 +134,15 @@ export async function probeMovieCodecs(movieId) {
   for (const f of findExternalSubs(cached.videoFile)) {
     subs.push({ idx: subs.length, kind: 'file', label: path.basename(f), file: f })
   }
-  return { ...cached, has_subs: subs.length > 0, subs, defaultSub: pickDefaultSub(subs) }
+  // 音轨列表（展示标签：语言转中文 + 声道数）；rel 用于转码 -map 0:a:N
+  const LANG_NAMES = { zho: '国语', chi: '国语', zh: '国语', cmn: '国语', eng: '英语', jpn: '日语', kor: '韩语', yue: '粤语', cze: '捷克语', fre: '法语', fra: '法语', ger: '德语', deu: '德语', ita: '意大利语', spa: '西班牙语', rus: '俄语', tha: '泰语', vie: '越南语', und: '' }
+  const audios = (cached.audioStreams || []).map(a => {
+    const lang = LANG_NAMES[a.lang] || (a.lang ? a.lang.toUpperCase() : '')
+    const ch = a.channels >= 2 ? `${a.channels} 声道` : ''
+    const label = [lang || `音轨 ${a.rel + 1}`, a.codec ? a.codec.toUpperCase() : '', ch].filter(Boolean).join(' · ')
+    return { rel: a.rel, label }
+  })
+  return { ...cached, has_subs: subs.length > 0, subs, defaultSub: pickDefaultSub(subs), audios }
 }
 
 // 浏览器可直接解码的视频编码（H.264/VP8/VP9/AV1）；音频通吃的是 AAC/MP3/Opus/FLAC
@@ -296,7 +312,7 @@ async function statWithRetry(file, tries = 3) {
  * 启动转码会话：按优先级尝试转码后端（nvenc → nvdec → qsv → cpu），
  * 第一个 HLS 分段产出才算启动成功。返回 { sid, startAt }
  */
-export async function startTranscode(movieId, startAt = 0, subIdx, targetHeight = 1080) {
+export async function startTranscode(movieId, startAt = 0, subIdx, targetHeight = 1080, audioIdx) {
   const row = db.prepare('SELECT video_file FROM movie WHERE id = ?').get(movieId)
   if (!row?.video_file) {
     const err = new Error('电影不存在或无视频文件')
@@ -325,6 +341,15 @@ export async function startTranscode(movieId, startAt = 0, subIdx, targetHeight 
   let targetH = TARGET_HEIGHTS.includes(Number(targetHeight)) ? Number(targetHeight) : 1080
   if (info?.height && info.height < targetH) targetH = info.height
 
+  // ---- 音轨选择 ----
+  // audioIdx = -1 / undefined / null → 默认第一条；数字 → probe 返回的 audios[].rel
+  let audioRel = 0
+  if (Number.isInteger(audioIdx) && audioIdx >= 0) {
+    const max = (info?.audios?.length || 1) - 1
+    audioRel = Math.min(audioIdx, Math.max(0, max))
+  }
+  const audioMap = `0:a:${audioRel}?`
+
   const sid = makeSid()
   const dir = await ensureSessionDir(sid)
   const session = {
@@ -334,7 +359,8 @@ export async function startTranscode(movieId, startAt = 0, subIdx, targetHeight 
     transcodedUs: 0,   // ffmpeg -progress 管道上报的已转码时长（微秒）
     progressDone: false,
     totalDuration: info?.duration || 0, // 影片总时长（秒）：m3u8 全时长化用
-    targetH           // 转码目标高度（2160/1080/源高度）
+    targetH,           // 转码目标高度（2160/1080/源高度）
+    audioMap           // 音轨流映射（-map 0:a:N?）
   }
   sessions.set(sid, session)
 
@@ -436,7 +462,7 @@ export async function startTranscode(movieId, startAt = 0, subIdx, targetHeight 
     throw err
   }
   session.ffmpeg = proc
-  console.log(`[stream] 转码启动 sid=${sid} backend=${session.backend}${needScale ? ` 缩放→${targetH}p` : ''}${hdr ? ' HDR→SDR' : ''}${sub ? ` 烧录字幕(${sub.label})` : ''}`)
+  console.log(`[stream] 转码启动 sid=${sid} backend=${session.backend}${needScale ? ` 缩放→${targetH}p` : ''}${hdr ? ' HDR→SDR' : ''}${sub ? ` 烧录字幕(${sub.label})` : ''} 音轨=${audioRel + 1}/${(info?.audios?.length) || 1}`)
   scheduleCleanup(session)
   return { sid, startAt: pos }
 }
@@ -485,7 +511,7 @@ async function trySpawn(backend, session, pos, videoFile, dir, acceptOnTimeout =
     ...(pos > 0 ? ['-ss', pos.toFixed(2)] : []), // 输入端快速定位到起点
     '-i', videoFile,
     // 视频流映射在 backend.video 里（烧 PGS 字幕时用 filter_complex 输出 [v]）
-    '-map', '0:a:0?',
+    '-map', session.audioMap || '0:a:0?',
     ...backend.video,
     '-c:a', 'aac', '-ac', '2', '-b:a', '192k',
     '-f', 'hls',

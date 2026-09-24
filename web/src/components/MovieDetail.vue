@@ -141,6 +141,8 @@ const playProbing = ref(false)
 const subChoice = ref(-1)   // 在线播放字幕轨（-1 = 无字幕）
 const webSubIdx = ref(-1)   // 传给网页播放器的字幕轨
 const webTargetH = ref(1080) // 传给网页播放器的转码目标高度
+const audioChoice = ref(0)  // 在线播放音轨（第几条）
+const webAudioIdx = ref(0)  // 传给网页播放器的音轨
 
 // 探测编码 + 按记忆偏好初始化字幕/分辨率选择（默认中文优先自动选轨；上次选了"无字幕"则默认关）
 async function probeForPlay() {
@@ -160,6 +162,8 @@ async function probeForPlay() {
   let hp = null
   try { hp = parseInt(localStorage.getItem('mc_target_h')) } catch {}
   webTargetH.value = hp === 2160 ? 2160 : 1080
+  // 音轨默认第一条（不记偏好：多音轨片少，每次看第一条（通常为国语/原声主轨）更可预期）
+  audioChoice.value = 0
 }
 
 // 是否显示分辨率选择：源超过 1080p 才有意义（4K 片选 4K/1080p）
@@ -190,6 +194,7 @@ function choosePlay(mode) {
       localStorage.setItem('mc_target_h', String(webTargetH.value))
     } catch {}
     webSubIdx.value = subChoice.value
+    webAudioIdx.value = audioChoice.value
     visible.value = false // 关闭详情弹窗，全屏播放
     openWebPlayer()
   } else play()
@@ -931,7 +936,7 @@ async function onLookup(imdbId) {
     </div>
   </el-dialog>
 
-  <VideoPlayer v-model="webPlayerVisible" :movie="movie" :sub-idx="webSubIdx" :target-h="webTargetH" />
+  <VideoPlayer v-model="webPlayerVisible" :movie="movie" :sub-idx="webSubIdx" :target-h="webTargetH" :audio-idx="webAudioIdx" />
 
   <el-dialog v-model="playChoiceVisible" title="选择播放方式" width="480px" append-to-body>
     <div class="pc-probe" v-loading="playProbing">
@@ -941,6 +946,13 @@ async function onLookup(imdbId) {
       </template>
       <template v-else-if="!playProbing">未安装 FFmpeg，无法探测编码</template>
       <template v-else>正在分析影片编码…</template>
+    </div>
+    <div class="pc-subs" v-if="playProbe?.probe_ok && playProbe.audios?.length > 1">
+      <div class="pc-subs-head">在线播放音轨</div>
+      <el-select v-model="audioChoice" class="pc-subs-select">
+        <el-option v-for="a in playProbe.audios" :key="a.rel" :value="a.rel" :label="a.label" />
+      </el-select>
+      <div class="pc-subs-tip">多音轨影片可选择国语 / 原声等；转码后生效</div>
     </div>
     <div class="pc-subs" v-if="playProbe?.probe_ok && playProbe.subs?.length">
       <div class="pc-subs-head">在线播放字幕</div>

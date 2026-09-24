@@ -3,7 +3,7 @@ import { db } from './db.js'
 
 const STATUS = ['wanted', 'obtained', 'ignored']
 
-function normalizeTitle(s) {
+export function normalizeTitle(s) {
   if (!s) return ''
   return String(s)
     .toLowerCase()

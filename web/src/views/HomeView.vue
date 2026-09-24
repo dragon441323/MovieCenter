@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
-import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present, Notebook, StarFilled, Collection, Monitor } from '@element-plus/icons-vue'
+import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present, Notebook, StarFilled, Collection, Monitor, Film } from '@element-plus/icons-vue'
 import { useLibraryStore } from '../stores/library'
 import { api } from '../api'
 import { formatSize } from '../utils'
@@ -131,6 +131,13 @@ onMounted(() => {
         <span class="nc-body">
           <span class="nc-title">电影库</span>
           <span class="nc-desc">浏览全部 {{ stats.totals.total }} 部影片</span>
+        </span>
+      </button>
+      <button class="nav-card" @click="$router.push('/news')">
+        <span class="nc-icon" style="--c: #d88f6a"><el-icon :size="22"><Film /></el-icon></span>
+        <span class="nc-body">
+          <span class="nc-title">影讯</span>
+          <span class="nc-desc">正在热映 · 即将上映</span>
         </span>
       </button>
       <button class="nav-card" @click="$router.push('/blindbox')">

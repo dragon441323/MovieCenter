@@ -12,7 +12,8 @@ const router = createRouter({
     { path: '/diary', name: 'diary', component: () => import('../views/DiaryView.vue') },
     { path: '/wishlist', name: 'wishlist', component: () => import('../views/WishlistView.vue') },
     { path: '/playlists', name: 'playlists', component: () => import('../views/PlaylistsView.vue') },
-    { path: '/monitor', name: 'monitor', component: () => import('../views/MonitorView.vue') }
+    { path: '/monitor', name: 'monitor', component: () => import('../views/MonitorView.vue') },
+    { path: '/news', name: 'news', component: () => import('../views/NewsView.vue') }
   ],
   scrollBehavior(to, from, saved) {
     return saved || { top: 0 }

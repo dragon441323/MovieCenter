@@ -8,6 +8,8 @@ const props = defineProps({
   movie: { type: Object, required: true },
   // 字幕轨：-1 = 无字幕；>= 0 = 转码时烧录该轨（直连模式选了字幕会强制走转码）
   subIdx: { type: Number, default: -1 },
+  // 音轨：>= 0 = 转码时选用该音轨（第几条）；直连模式忽略
+  audioIdx: { type: Number, default: 0 },
   // 转码目标高度：1080（默认流畅）/ 2160（4K 保画质）；源不够高时服务端自动取源高度
   targetH: { type: Number, default: 1080 }
 })
@@ -84,8 +86,8 @@ async function probeAndPlay() {
     const p = await api.streamProbe(props.movie.id)
     note.value = p.note || ''
     if (p.duration) dur.value = p.duration
-    // 直连无法烧字幕：选了字幕就强制走转码
-    if (p.mode === 'direct' && props.subIdx < 0) {
+    // 直连无法烧字幕 / 切音轨：选了字幕或非第一条音轨就强制走转码
+    if (p.mode === 'direct' && props.subIdx < 0 && (!props.audioIdx || props.audioIdx <= 0)) {
       mode.value = 'direct'
       startDirect()
     } else {
@@ -107,7 +109,7 @@ function startDirect() {
 
 async function startTranscode() {
   try {
-    const r = await api.streamTranscode(props.movie.id, null, props.subIdx, props.targetH)
+    const r = await api.streamTranscode(props.movie.id, null, props.subIdx, props.targetH, props.audioIdx)
     sid.value = r.sid
     baseStart.value = Number(r.startAt) || 0
     startHeartbeat()
@@ -164,7 +166,7 @@ async function restartTranscodeAt(t) {
   state.value = 'buffering'
   teardownSession()
   try {
-    const r = await api.streamTranscode(props.movie.id, Math.round(t * 10) / 10, props.subIdx, props.targetH)
+    const r = await api.streamTranscode(props.movie.id, Math.round(t * 10) / 10, props.subIdx, props.targetH, props.audioIdx)
     sid.value = r.sid
     baseStart.value = Number(r.startAt) || t
     cur.value = baseStart.value

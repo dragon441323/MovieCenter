@@ -49,6 +49,8 @@ streamRouter.get('/:id/probe', async (req, res) => {
       lang: s.lang || ''
     })),
     defaultSub: info.defaultSub ?? -1,
+    // 音轨列表（含语言/编码/声道标签），供播放方式弹窗选择
+    audios: info.audios || [],
     note: direct
       ? '浏览器可直接播放，原画质直连'
       : `${info.video_codec}${info.audio_codec ? ' / ' + info.audio_codec : ''}${info.hdr ? ' HDR' : ''} 浏览器不支持，服务器转码为 1080p H.264${info.hdr ? '（HDR→SDR）' : ''}`
@@ -69,7 +71,8 @@ streamRouter.post('/:id/transcode', async (req, res) => {
   try {
     // subIdx：-1 关字幕；null/undefined 用默认（中文优先）；数字 = probe 返回的 subs[].idx
     // targetHeight：2160（4K 保画质）/ 1080（默认）
-    const r = await startTranscode(id, req.body?.startAt, req.body?.subIdx, req.body?.targetHeight)
+    // audioIdx：数字 = probe 返回的 audios[].rel（第几条音轨）；缺省 = 第一条
+    const r = await startTranscode(id, req.body?.startAt, req.body?.subIdx, req.body?.targetHeight, req.body?.audioIdx)
     res.json({ sid: r.sid, startAt: r.startAt, stats: transcodeStats() })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })
