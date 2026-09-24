@@ -180,6 +180,10 @@ function buildMovieFilters(q) {
   }
   if (q.unrated === 'true' || q.unrated === '1') where.push('my_rating IS NULL')
   if (q.top250 === 'true' || q.top250 === '1') where.push('douban_rank IS NOT NULL')
+  // 未同步：缺海报或缺简介（TMDB 刮削不完整）
+  if (q.unsynced === 'true' || q.unsynced === '1') {
+    where.push("(cover = '' OR synopsis = '' OR tmdb_id IS NULL)")
+  }
 
   const tagNames = String(q.tags || q.tag || '').split(',').map(s => s.trim()).filter(Boolean)
   if (tagNames.length) {
@@ -524,6 +528,56 @@ movieRouter.post('/:id/reprobe', async (req, res) => {
   db.prepare("UPDATE movie SET quality = ?, updated_at = datetime('now') WHERE id = ?").run(q, id)
   const updated = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
   res.json(attachTags([updated])[0])
+})
+
+/**
+ * 在线播放进度上报：
+ * - position/duration：只记录，供续播（暂存内存表 watch_progress）
+ * - done=true（前端判定看够 90%）：标已看 + 观看计数 + 写观影日记（与本地播放同一套逻辑）
+ */
+const watchProgress = new Map() // movieId -> { position, duration, updatedAt }
+const WATCH_DONE_RATIO = 0.9
+
+movieRouter.post('/:id/playback', (req, res) => {
+  const id = parseId(req.params.id)
+  if (!id) return res.status(400).json({ error: '无效的 ID' })
+  const row = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
+  if (!row) return res.status(404).json({ error: '电影不存在' })
+  const position = Math.max(0, Number(req.body?.position) || 0)
+  const duration = Math.max(0, Number(req.body?.duration) || 0)
+  const done = req.body?.done === true
+    || (duration > 0 && position / duration >= WATCH_DONE_RATIO)
+
+  if (position > 0) watchProgress.set(id, { position, duration, updatedAt: Date.now() })
+
+  if (done) {
+    const now = new Date().toISOString()
+    db.prepare(`
+      UPDATE movie SET watch_count = watch_count + 1, watched = 1, last_watched_at = ?,
+        updated_at = datetime('now') WHERE id = ?
+    `).run(now, id)
+    // 看完写日记（source=web，幂等：同一片 10 分钟内不重复写）
+    const recent = db.prepare(
+      "SELECT 1 FROM watch_log WHERE movie_id = ? AND source = 'web' AND created_at > datetime('now', '-10 minutes')"
+    ).get(id)
+    if (!recent) {
+      db.prepare(
+        "INSERT INTO watch_log (movie_id, watched_at, rating, note, source) VALUES (?, ?, ?, ?, 'web')"
+      ).run(id, now, row.my_rating ?? null, '在线播放看完')
+    }
+    watchProgress.delete(id)
+    const updated = db.prepare('SELECT * FROM movie WHERE id = ?').get(id)
+    return res.json({ ...attachTags([updated])[0], done: true })
+  }
+  res.json({ ok: true, done: false })
+})
+
+// 读取续播位置（打开播放器时问“从哪继续”）
+movieRouter.get('/:id/playback', (req, res) => {
+  const id = parseId(req.params.id)
+  if (!id) return res.status(400).json({ error: '无效的 ID' })
+  const p = watchProgress.get(id)
+  res.json({ position: p?.position || 0, duration: p?.duration || 0, has_progress: !!p && p.position > 30 })
 })
 
 movieRouter.get('/:id/ratings', (req, res) => {

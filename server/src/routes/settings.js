@@ -15,7 +15,8 @@ function getSettings() {
     tmdb_language: LANGS.includes(map.tmdb_language) ? map.tmdb_language : 'zh-CN',
     tmdb_proxy: map.tmdb_proxy || '',
     player_path: map.player_path || '',
-    douban_uid: map.douban_uid || ''
+    douban_uid: map.douban_uid || '',
+    watch_enabled: (map.watch_enabled ?? '1') === '1'
   }
 }
 
@@ -27,7 +28,7 @@ settingsRouter.get('/', async (req, res) => {
   res.json({ ...getSettings(), probe_available: await ffprobeAvailable() })
 })
 
-settingsRouter.put('/', (req, res) => {
+settingsRouter.put('/', async (req, res) => {
   const b = req.body || {}
   if ('tmdb_api_key' in b) upsert('tmdb_api_key', String(b.tmdb_api_key || '').trim())
   if ('tmdb_proxy' in b) {
@@ -55,6 +56,12 @@ settingsRouter.put('/', (req, res) => {
       return res.status(400).json({ error: '豆瓣 UID 需为纯数字' })
     }
     upsert('douban_uid', uid)
+  }
+  if ('watch_enabled' in b) {
+    upsert('watch_enabled', b.watch_enabled === false || b.watch_enabled === '0' ? '0' : '1')
+    // 立即生效：重载文件夹监听
+    const { startWatcher } = await import('../watcher.js')
+    startWatcher()
   }
   res.json(getSettings())
 })

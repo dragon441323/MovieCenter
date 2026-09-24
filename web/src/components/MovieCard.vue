@@ -34,6 +34,7 @@ const hue = computed(() => {
         <span class="ph-title">{{ movie.title }}</span>
       </div>
       <span v-if="movie.douban_rank" class="douban-badge font-display">TOP {{ movie.douban_rank }}</span>
+      <span v-if="!movie.cover_url || !movie.synopsis" class="unsynced-badge" :class="{ below: movie.douban_rank }" title="信息未同步：缺海报或简介，可在详情页点 TMDB 同步">未同步</span>
       <div class="badges-tr">
         <span v-if="movie.my_rating != null" class="rating-badge font-display">{{ Number(movie.my_rating).toFixed(1) }}</span>
         <span v-if="movie.quality" class="quality-badge font-display" :class="qualityClass">{{ movie.quality }}</span>
@@ -172,6 +173,25 @@ const hue = computed(() => {
   font-size: 13px;
   padding: 2px 7px 1px;
   border-radius: 6px;
+}
+
+/* 未同步角标：缺海报/简介（TMDB 刮削不完整）；与 TOP 徽章同侧时下移错开 */
+.unsynced-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  background: rgba(224, 122, 106, 0.92);
+  color: #100e0c;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px 1px;
+  border-radius: 6px;
+  cursor: help;
+}
+
+.unsynced-badge.below {
+  top: 34px;
 }
 
 .overlay {

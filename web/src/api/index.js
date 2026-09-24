@@ -111,13 +111,19 @@ export const api = {
   addToPlaylist: (id, movieId) => request('POST', `/api/playlists/${id}/movies`, { movie_id: movieId }),
   removeFromPlaylist: (id, movieId) => request('DELETE', `/api/playlists/${id}/movies/${movieId}`),
   reorderPlaylist: (id, movieIds) => request('PUT', `/api/playlists/${id}/order`, { movie_ids: movieIds }),
-  // 视频流（subIdx：-1 关字幕；null/undefined 默认中文；数字 = 指定字幕轨）
+  // 视频流（subIdx：-1 关字幕；null/undefined 默认中文；数字 = 指定字幕轨；targetHeight：2160/1080）
   streamProbe: id => request('GET', `/api/stream/${id}/probe`),
-  streamTranscode: (id, startAt, subIdx) => request('POST', `/api/stream/${id}/transcode`, {
+  streamTranscode: (id, startAt, subIdx, targetHeight) => request('POST', `/api/stream/${id}/transcode`, {
     ...(startAt != null ? { startAt } : {}),
-    ...(subIdx != null ? { subIdx } : {})
+    ...(subIdx != null ? { subIdx } : {}),
+    ...(targetHeight != null ? { targetHeight } : {})
   }),
   streamHeartbeat: sid => request('POST', `/api/stream/session/${sid}/heartbeat`),
   streamProgress: sid => request('GET', `/api/stream/session/${sid}/progress`),
-  streamStop: sid => request('POST', `/api/stream/session/${sid}/stop`)
+  streamStop: sid => request('POST', `/api/stream/session/${sid}/stop`),
+  // 在线播放进度上报（续播位置 + 看完统计）
+  reportPlayback: (id, position, duration, done) => request('POST', `/api/movies/${id}/playback`, { position, duration, done }),
+  getPlayback: id => request('GET', `/api/movies/${id}/playback`),
+  // 性能监控
+  monitor: () => request('GET', '/api/system/monitor')
 }

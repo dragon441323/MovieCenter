@@ -7,7 +7,9 @@ import { api } from '../api'
 const props = defineProps({
   movie: { type: Object, required: true },
   // 字幕轨：-1 = 无字幕；>= 0 = 转码时烧录该轨（直连模式选了字幕会强制走转码）
-  subIdx: { type: Number, default: -1 }
+  subIdx: { type: Number, default: -1 },
+  // 转码目标高度：1080（默认流畅）/ 2160（4K 保画质）；源不够高时服务端自动取源高度
+  targetH: { type: Number, default: 1080 }
 })
 const visible = defineModel({ type: Boolean, default: false })
 
@@ -50,6 +52,8 @@ let hls = null
 let heartbeatTimer = null
 let progressTimer = null
 let controlsTimer = null
+let playbackReportTimer = null   // 在线播放进度上报（续播记忆 + 看完统计）
+let reportedDone = false         // 本次会话是否已上报"看完"（防重复）
 
 const curPos = computed(() => (dragging.value ? scrub.value : cur.value))
 const playPct = computed(() => (dur.value ? Math.min(100, (curPos.value / dur.value) * 100) : 0))
@@ -103,7 +107,7 @@ function startDirect() {
 
 async function startTranscode() {
   try {
-    const r = await api.streamTranscode(props.movie.id, null, props.subIdx)
+    const r = await api.streamTranscode(props.movie.id, null, props.subIdx, props.targetH)
     sid.value = r.sid
     baseStart.value = Number(r.startAt) || 0
     startHeartbeat()
@@ -160,7 +164,7 @@ async function restartTranscodeAt(t) {
   state.value = 'buffering'
   teardownSession()
   try {
-    const r = await api.streamTranscode(props.movie.id, Math.round(t * 10) / 10, props.subIdx)
+    const r = await api.streamTranscode(props.movie.id, Math.round(t * 10) / 10, props.subIdx, props.targetH)
     sid.value = r.sid
     baseStart.value = Number(r.startAt) || t
     cur.value = baseStart.value
@@ -216,6 +220,8 @@ function fail(msg) {
 function teardownSession() {
   stopHeartbeat()
   stopProgressPoll()
+  stopPlaybackReport()
+  reportPlayback(false) // 关闭/重开前补报最后一次位置
   tcTo.value = 0
   tcDone.value = false
   if (hls) { hls.destroy(); hls = null }
@@ -406,9 +412,19 @@ function onBarLeave() {
 
 function onVideoEvent(e) {
   const v = videoRef.value
-  if (e.type === 'playing') state.value = 'playing'
+  if (e.type === 'playing') {
+    state.value = 'playing'
+    startPlaybackReport()
+  }
   else if (e.type === 'waiting') state.value = 'buffering'
-  else if (e.type === 'pause') state.value = v?.ended ? 'ended' : 'paused'
+  else if (e.type === 'pause') {
+    state.value = v?.ended ? 'ended' : 'paused'
+    reportPlayback(false) // 暂停时补报一次位置
+  }
+  else if (e.type === 'ended') {
+    state.value = 'ended'
+    reportPlayback(true) // 自然播完 = 看完
+  }
   else if (e.type === 'error' && mode.value === 'direct') {
     // 直连解码失败 → 自动转码
     note.value = '浏览器无法直接解码，已切换服务器转码'
@@ -426,6 +442,31 @@ function onTimeUpdate() {
   const b = v.buffered
   if (b && b.length) bufEnd.value = off + b.end(b.length - 1)
   if (mode.value === 'direct' && isFinite(v.duration) && v.duration > 0) dur.value = v.duration
+}
+
+// ---------- 在线播放进度上报 ----------
+// 定期上报：服务端记录续播位置；看够 90% 或自然播完 → 标已看 + 写观影日记
+function reportPlayback(done = false) {
+  if (reportedDone) return
+  const v = videoRef.value
+  if (!v || !props.movie?.id) return
+  const off = mode.value === 'transcode' ? baseStart.value : 0
+  const position = off + v.currentTime
+  const duration = dur.value || v.duration || 0
+  if (!position || !duration) return
+  if (done) reportedDone = true
+  api.reportPlayback(props.movie.id, position, duration, done).catch(() => {})
+}
+
+function startPlaybackReport() {
+  stopPlaybackReport()
+  playbackReportTimer = setInterval(() => {
+    if (state.value === 'playing') reportPlayback(false)
+  }, 10000)
+}
+
+function stopPlaybackReport() {
+  if (playbackReportTimer) { clearInterval(playbackReportTimer); playbackReportTimer = null }
 }
 
 function onLoadedMeta() {
@@ -472,6 +513,7 @@ watch(visible, v => {
     tcTo.value = 0
     tcDone.value = false
     handedOff.value = false
+    reportedDone = false
     setPageScrollLock(true)
     probeAndPlay()
     wakeControls()
@@ -520,6 +562,7 @@ const stateLabel = {
           @playing="onVideoEvent"
           @waiting="onVideoEvent"
           @pause="onVideoEvent"
+          @ended="onVideoEvent"
           @error="onVideoEvent"
           @timeupdate="onTimeUpdate"
           @progress="onTimeUpdate"
@@ -552,7 +595,7 @@ const stateLabel = {
           <div class="vp-title">
             <span class="t">{{ movie.title }}</span>
             <span v-if="movie.year" class="y font-display">{{ movie.year }}</span>
-            <span v-if="mode" class="m">{{ mode === 'direct' ? '直连原画' : '服务器转码 1080p' }}</span>
+            <span v-if="mode" class="m">{{ mode === 'direct' ? '直连原画' : `服务器转码 ${targetH >= 2000 ? '4K' : '1080p'}` }}</span>
           </div>
         </div>
 

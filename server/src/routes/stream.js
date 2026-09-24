@@ -68,7 +68,8 @@ streamRouter.post('/:id/transcode', async (req, res) => {
   if (!id) return res.status(400).json({ error: '无效的 ID' })
   try {
     // subIdx：-1 关字幕；null/undefined 用默认（中文优先）；数字 = probe 返回的 subs[].idx
-    const r = await startTranscode(id, req.body?.startAt, req.body?.subIdx)
+    // targetHeight：2160（4K 保画质）/ 1080（默认）
+    const r = await startTranscode(id, req.body?.startAt, req.body?.subIdx, req.body?.targetHeight)
     res.json({ sid: r.sid, startAt: r.startAt, stats: transcodeStats() })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })

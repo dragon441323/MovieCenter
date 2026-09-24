@@ -23,6 +23,8 @@ scanRouter.post('/paths', (req, res) => {
   if (!st.isDirectory()) return res.status(400).json({ error: '路径不是目录' })
   try {
     const r = db.prepare('INSERT INTO scan_path (path) VALUES (?)').run(p)
+    // 新目录纳入监听
+    import('../watcher.js').then(m => m.startWatcher()).catch(() => {})
     res.status(201).json({ id: Number(r.lastInsertRowid), path: p, enabled: 1 })
   } catch {
     res.status(409).json({ error: '该路径已存在' })
@@ -34,6 +36,8 @@ scanRouter.delete('/paths/:id', (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '无效的 ID' })
   const r = db.prepare('DELETE FROM scan_path WHERE id = ?').run(id)
   if (!r.changes) return res.status(404).json({ error: '路径不存在' })
+  // 目录移除后重载监听
+  import('../watcher.js').then(m => m.startWatcher()).catch(() => {})
   res.json({ ok: true })
 })
 

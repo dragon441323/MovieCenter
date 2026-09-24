@@ -20,7 +20,7 @@ export const useLibraryStore = defineStore('library', {
     scanning: false,
     scanState: null,
     rows: { recent_watched: [], top_unwatched: [], top250: [], featured: [] },
-    filters: { q: '', category: '', tags: [], year: null, favorite: false, watched: '', myRating: '', director: '', actor: '', top250: false, country: '', quality: '', sort: 'rating', order: 'desc' }
+    filters: { q: '', category: '', tags: [], year: null, favorite: false, watched: '', myRating: '', director: '', actor: '', top250: false, country: '', quality: '', unsynced: false, sort: 'rating', order: 'desc' }
   }),
   actions: {
     buildFilterParams() {
@@ -43,6 +43,7 @@ export const useLibraryStore = defineStore('library', {
       if (f.director) params.director = f.director
       if (f.actor) params.actor = f.actor
       if (f.top250) params.top250 = true
+      if (f.unsynced) params.unsynced = true
       if (f.country) params.country = f.country
       if (f.quality) params.quality = f.quality
       return params

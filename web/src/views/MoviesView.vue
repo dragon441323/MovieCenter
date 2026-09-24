@@ -24,6 +24,7 @@ const detailVisible = ref(false)
 const detailMovie = ref(null)
 const detailRef = ref(null)
 const settingsVisible = ref(false)
+function openSettings() { settingsVisible.value = true }
 const top250Count = ref(0)
 const picking = ref(false)
 
@@ -420,6 +421,16 @@ onMounted(() => {
       <el-button
         class="sidebar-btn"
         size="large"
+        :type="filters.unsynced ? 'danger' : 'default'"
+        plain
+        @click="store.setFilters({ unsynced: !filters.unsynced })"
+      >
+        <span class="btn-label">未同步</span>
+      </el-button>
+
+      <el-button
+        class="sidebar-btn"
+        size="large"
         :type="view === 'directors' || filters.director ? 'primary' : 'default'"
         @click="toggleDirectors"
       >
@@ -519,6 +530,10 @@ onMounted(() => {
           </el-button>
           <span v-if="filters.director" class="browse-current">导演：{{ filters.director }}</span>
           <span v-else-if="filters.actor" class="browse-current">演员：{{ filters.actor }}</span>
+        </div>
+        <div v-if="filters.unsynced" class="unsynced-tip">
+          <span>以下影片缺少海报或简介。可在详情页单独同步，或到 设置 → TMDB → 批量同步 一次补全全部。</span>
+          <el-button size="small" type="primary" plain @click="openSettings">打开批量同步</el-button>
         </div>
         <div v-if="movies.length" class="wall">
           <MovieCard v-for="m in movies" :key="m.id" :movie="m" @open="openDetail" @play="playMovie" />
@@ -684,6 +699,21 @@ onMounted(() => {
 .browse-current {
   font-size: 14px;
   color: #9a8b74;
+}
+
+.unsynced-tip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  background: rgba(224, 164, 88, 0.08);
+  border: 1px solid rgba(224, 164, 88, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #d8c9a8;
 }
 
 .person-page-title {

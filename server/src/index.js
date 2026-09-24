@@ -29,6 +29,7 @@ import { scanAll, addDefaultMoviePaths } from './scanner.js'
 import { ffprobeAvailable } from './probe.js'
 import { ensureWeeklyBackup } from './backup.js'
 import { matchWishlistToLibrary } from './wishlist.js'
+import { startWatcher } from './watcher.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 9527
@@ -173,6 +174,7 @@ app.listen(PORT, async () => {
     if (ok) console.log('[probe] ffprobe 已就绪，扫描时将读取视频真实分辨率识别画质')
     else console.log('[probe] 未检测到 ffprobe，画质仅按文件名识别；安装 FFmpeg 后重启即可自动启用深度识别')
   })
+  startWatcher()
   scanAll()
     .then(r => {
       console.log('[scan] startup scan done:', JSON.stringify(r))

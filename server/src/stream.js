@@ -205,12 +205,34 @@ export function directStream(req, res, movieId) {
 
 const SESSION_TTL_MS = 10 * 60 * 1000        // 停止心跳 10 分钟后自动清理
 const HLS_SEG_SECONDS = 6
-const MAX_CONCURRENT_TRANSCODES = 2
+const MAX_CONCURRENT_TRANSCODES = 5          // 并发转码上限（NVENC 双引擎可撑 5-6 路）
+const TARGET_HEIGHTS = [2160, 1080]          // 转码目标分辨率档位（4K / 1080p）
 
 const sessions = new Map() // sid -> { sid, movieId, ffmpeg, dir, m3u8, startedAt, lastTouch, segments, timer }
 
 export function transcodeStats() {
   return { active: [...sessions.values()].filter(s => s.ffmpeg).length, max: MAX_CONCURRENT_TRANSCODES }
+}
+
+/** 监控页用：全部转码会话详情（含影片名/后端/进度） */
+export function getSessionDetails() {
+  const names = new Map(
+    db.prepare('SELECT id, title FROM movie').all().map(r => [r.id, r.title])
+  )
+  return [...sessions.values()].map(s => ({
+    sid: s.sid,
+    movie_id: s.movieId,
+    title: names.get(s.movieId) || `#${s.movieId}`,
+    backend: s.backend,
+    target_h: s.targetH,
+    start_at: s.startAt,
+    transcoded_to: s.startAt + (s.transcodedUs || 0) / 1e6,
+    total_duration: s.totalDuration,
+    done: !!s.progressDone,
+    running: !!s.ffmpeg,
+    started_at: s.startedAt,
+    last_touch: s.lastTouch
+  }))
 }
 
 /** 杀掉全部转码会话（服务退出 / 孤儿清理保底用） */
@@ -274,7 +296,7 @@ async function statWithRetry(file, tries = 3) {
  * 启动转码会话：按优先级尝试转码后端（nvenc → nvdec → qsv → cpu），
  * 第一个 HLS 分段产出才算启动成功。返回 { sid, startAt }
  */
-export async function startTranscode(movieId, startAt = 0, subIdx) {
+export async function startTranscode(movieId, startAt = 0, subIdx, targetHeight = 1080) {
   const row = db.prepare('SELECT video_file FROM movie WHERE id = ?').get(movieId)
   if (!row?.video_file) {
     const err = new Error('电影不存在或无视频文件')
@@ -299,6 +321,9 @@ export async function startTranscode(movieId, startAt = 0, subIdx) {
     err.status = 429
     throw err
   }
+  // 目标高度：只允许档位值；源不够高时降到源高度（不放大）
+  let targetH = TARGET_HEIGHTS.includes(Number(targetHeight)) ? Number(targetHeight) : 1080
+  if (info?.height && info.height < targetH) targetH = info.height
 
   const sid = makeSid()
   const dir = await ensureSessionDir(sid)
@@ -307,13 +332,21 @@ export async function startTranscode(movieId, startAt = 0, subIdx) {
     m3u8: path.join(dir, 'index.m3u8'),
     startedAt: Date.now(), lastTouch: Date.now(), segments: 0, timer: null,
     transcodedUs: 0,   // ffmpeg -progress 管道上报的已转码时长（微秒）
-    progressDone: false
+    progressDone: false,
+    totalDuration: info?.duration || 0, // 影片总时长（秒）：m3u8 全时长化用
+    targetH           // 转码目标高度（2160/1080/源高度）
   }
   sessions.set(sid, session)
 
   const srcWidth = info?.width || 0
+  const srcHeight = info?.height || 0
   const hdr = info?.hdr || false
-  const needScale = srcWidth > 1920
+  // 目标宽度：按目标高度 × 源宽高比计算（奇数取整到偶数）；源不大时等于源宽（不放大）
+  const needScale = srcHeight > targetH
+  const targetW = needScale ? Math.round(srcWidth * targetH / srcHeight / 2) * 2 : srcWidth
+  // 码率按目标高度分档（4K 保画质上限 20M，1080p 5M）
+  const maxrate = targetH >= 2000 ? '20M' : '5M'
+  const bufsize = targetH >= 2000 ? '40M' : '10M'
   // HDR10/HLG → SDR 色调映射（不映射直接压 8-bit 会发灰发白）
   const TONEMAP = 'zscale=transfer=linear:npl=100,tonemap=hable,zscale=transfer=bt709:primaries=bt709:matrix=bt709'
 
@@ -329,20 +362,20 @@ export async function startTranscode(movieId, startAt = 0, subIdx) {
   const escFilterPath = p => "'" + p.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'") + "'"
 
   // 组装某后端的视频参数（流映射 + 滤镜链 + 编码器）。
-  // 基础链：按需缩放到 1080p 上限 + 按需 HDR→SDR；统一 8-bit（浏览器 H.264 只支持 8-bit，
+  // 基础链：按需缩放到目标高度 + 按需 HDR→SDR；统一 8-bit（浏览器 H.264 只支持 8-bit，
   // 10-bit 源不强制转换会输出 High 10 profile，网页一律黑屏/无法播放）
   const buildVideo = (outFmt, enc) => {
     const chain = [
-      ...(needScale ? ['scale=1920:-2:flags=bicubic'] : []),
+      ...(needScale ? [`scale=${targetW}:-2:flags=bicubic`] : []),
       ...(hdr ? [TONEMAP] : [])
     ]
     if (!sub) return ['-map', '0:v:0', '-vf', [...chain, `format=${outFmt}`].join(','), ...enc]
     if (sub.kind === 'pgs') {
       // 图形字幕（蓝光 PGS / DVB）：解码成带 alpha 的帧后在 filter_complex 里叠加。
-      // UHD 原盘的 PGS 本身是 2160p，视频缩到 1080p 时字幕同样要缩放
+      // UHD 原盘的 PGS 分辨率与视频一致，视频缩放时字幕同样要缩放
       return [
         '-filter_complex',
-        `[0:v:0]${[...chain, 'format=yuv420p'].join(',')}[bg];[0:s:${sub.rel}]${needScale ? 'scale=1920:-2' : 'null'}[sb];[bg][sb]overlay,format=${outFmt}[v]`,
+        `[0:v:0]${[...chain, 'format=yuv420p'].join(',')}[bg];[0:s:${sub.rel}]${needScale ? `scale=${targetW}:-2` : 'null'}[sb];[bg][sb]overlay,format=${outFmt}[v]`,
         '-map', '[v]', ...enc
       ]
     }
@@ -361,10 +394,10 @@ export async function startTranscode(movieId, startAt = 0, subIdx) {
       video: [
         '-map', '0:v:0',
         '-vf', (hdr
-          ? [...(needScale ? ['scale_cuda=1920:-2'] : []), 'hwdownload', 'format=p010le', TONEMAP, 'format=nv12']
-          : [needScale ? 'scale_cuda=1920:-2:format=nv12' : 'scale_cuda=format=nv12']
+          ? [...(needScale ? [`scale_cuda=${targetW}:-2`] : []), 'hwdownload', 'format=p010le', TONEMAP, 'format=nv12']
+          : [needScale ? `scale_cuda=${targetW}:-2:format=nv12` : 'scale_cuda=format=nv12']
         ).join(','),
-        '-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '27', '-maxrate', '5M', '-bufsize', '10M', '-b:v', '0'
+        '-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '27', '-maxrate', maxrate, '-bufsize', bufsize, '-b:v', '0'
       ]
     }]),
     {
@@ -403,7 +436,7 @@ export async function startTranscode(movieId, startAt = 0, subIdx) {
     throw err
   }
   session.ffmpeg = proc
-  console.log(`[stream] 转码启动 sid=${sid} backend=${session.backend}${needScale ? ' 缩放→1080p' : ''}${hdr ? ' HDR→SDR' : ''}${sub ? ` 烧录字幕(${sub.label})` : ''}`)
+  console.log(`[stream] 转码启动 sid=${sid} backend=${session.backend}${needScale ? ` 缩放→${targetH}p` : ''}${hdr ? ' HDR→SDR' : ''}${sub ? ` 烧录字幕(${sub.label})` : ''}`)
   scheduleCleanup(session)
   return { sid, startAt: pos }
 }
@@ -578,30 +611,110 @@ export function sessionProgress(sid) {
     startAt: s.startAt,
     transcodedTo: s.startAt + (s.transcodedUs || 0) / 1e6,
     done: !!s.progressDone, // 全片（从起点到结尾）转码完成
-    running: !!s.ffmpeg
+    running: !!s.ffmpeg,
+    targetH: s.targetH
   }
 }
 
-/** 输出 m3u8 / 分段文件 */
+/**
+ * 解析 ffmpeg 产出的真实 m3u8：返回分段列表 [{ file, dur }] 与累计时长。
+ * ffmpeg 边转边重写这个文件（tmp → 正式名原子替换），readFileSync 整读快放，
+ * 不与重命名冲突（Windows 无 FILE_SHARE_DELETE，不能持句柄）。
+ */
+function parseRealM3u8(file) {
+  let text
+  try { text = fs.readFileSync(file, 'utf8') } catch { return null }
+  const segs = []
+  let total = 0
+  for (const line of text.split('\n')) {
+    const t = line.trim()
+    if (t.startsWith('#EXTINF:')) {
+      const d = parseFloat(t.slice(8))
+      if (Number.isFinite(d)) segs.push({ file: '', dur: d })
+    } else if (t && !t.startsWith('#') && segs.length) {
+      segs[segs.length - 1].file = t
+      total += segs[segs.length - 1].dur
+    }
+    if (t.startsWith('#EXT-X-ENDLIST')) return { segs, total, ended: true }
+  }
+  return { segs, total, ended: false }
+}
+
+/**
+ * 输出"全时长"m3u8：真实分段 + 未转码部分用占位分段补齐到影片总时长。
+ * 系统播放器（手机内置播放器）用播放列表时长当总时长，不补齐的话
+ * 显示的"总时长"会随转码进度增长、拖动条也被限制在已转码范围内。
+ * hls.js / 原生 HLS 播放到占位分段时向服务器要文件，服务器等真实分段
+ * 产出后再给（分段尚未生成 → 轮询等待，见 serveSegment）。
+ */
 export async function serveHlsPart(req, res, sid, file) {
   const s = touchSession(sid)
   if (!s) return res.status(404).json({ error: '转码会话已结束' })
   // 只允许访问本会话目录下的文件
   const target = path.join(s.dir, path.basename(file))
   if (!target.startsWith(s.dir)) return res.status(400).json({ error: '非法路径' })
-  try {
-    const stat = await fsp.stat(target)
-    res.set('Cache-Control', 'no-store')
-    if (file.endsWith('.m3u8')) {
-      // 播放列表整读快放：createReadStream 会持有句柄到网络发送完毕，
-      // 期间会挡住 ffmpeg 对 m3u8 的原子重命名（Windows 无 FILE_SHARE_DELETE）
-      res.set('Content-Type', 'application/vnd.apple.mpegurl')
-      res.end(fs.readFileSync(target))
-    } else {
-      res.set('Content-Type', 'video/mp2t')
-      fs.createReadStream(target).pipe(res)
+
+  if (file === 'index.m3u8' || file.endsWith('.m3u8')) {
+    const real = parseRealM3u8(target)
+    const total = s.totalDuration
+    const lines = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:10', '#EXT-X-MEDIA-SEQUENCE:0']
+    let covered = 0
+    for (const seg of real?.segs || []) {
+      lines.push(`#EXTINF:${seg.dur.toFixed(4)},`, seg.file)
+      covered += seg.dur
     }
+    // 占位分段：补齐到总时长。直接用 ffmpeg 的未来分段序号命名
+    // （真实分段之后的连续编号），轮询时无需序号换算、天然无竞态。
+    if (total > covered + 1 && !s.progressDone) {
+      const avg = real?.segs?.length ? real.total / real.segs.length : HLS_SEG_SECONDS
+      let remain = total - s.startAt - covered
+      let n = real?.segs?.length || 0
+      while (remain > 0.5 && n < 100000) {
+        const d = Math.min(avg, remain)
+        lines.push(`#EXTINF:${d.toFixed(4)},`, `seg${String(n).padStart(5, '0')}.ts`)
+        remain -= d
+        n++
+      }
+    }
+    if (s.progressDone || (real && real.ended && total && covered >= total - s.startAt - 1)) {
+      lines.push('#EXT-X-ENDLIST')
+    } else if (!total) {
+      // 探测不到总时长（异常情况）：退回原始列表，行为与旧版一致
+      try {
+        res.set('Content-Type', 'application/vnd.apple.mpegurl')
+        res.set('Cache-Control', 'no-store')
+        return res.end(fs.readFileSync(target))
+      } catch { return res.status(404).json({ error: '分段尚未生成' }) }
+    }
+    res.set('Content-Type', 'application/vnd.apple.mpegurl')
+    res.set('Cache-Control', 'no-store')
+    res.end(lines.join('\n') + '\n')
+    return
+  }
+
+  // 分段请求：文件已产出直接给；还没产出（列表里声明的未来分段）
+  // → 轮询等待 ffmpeg 写出该文件后给出（最长 90 秒）
+  try {
+    await fsp.stat(target)
+    res.set('Cache-Control', 'no-store')
+    res.set('Content-Type', 'video/mp2t')
+    fs.createReadStream(target).pipe(res)
   } catch {
-    res.status(404).json({ error: '分段尚未生成' })
+    const deadline = Date.now() + 90000
+    const poll = async () => {
+      try {
+        await fsp.stat(target)
+        res.set('Cache-Control', 'no-store')
+        res.set('Content-Type', 'video/mp2t')
+        fs.createReadStream(target).pipe(res)
+      } catch {
+        if (!sessions.has(sid) || s.progressDone || Date.now() > deadline) {
+          res.status(404).json({ error: '分段尚未生成' })
+        } else {
+          setTimeout(poll, 500)
+        }
+      }
+    }
+    poll()
   }
 }

@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
-import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present, Notebook, StarFilled, Collection } from '@element-plus/icons-vue'
+import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present, Notebook, StarFilled, Collection, Monitor } from '@element-plus/icons-vue'
 import { useLibraryStore } from '../stores/library'
 import { api } from '../api'
 import { formatSize } from '../utils'
@@ -166,6 +166,13 @@ onMounted(() => {
         <span class="nc-body">
           <span class="nc-title">统计面板</span>
           <span class="nc-desc">观影报告 · 类型 · 排行</span>
+        </span>
+      </button>
+      <button class="nav-card" @click="$router.push('/monitor')">
+        <span class="nc-icon" style="--c: #7fb8d8"><el-icon :size="22"><Monitor /></el-icon></span>
+        <span class="nc-body">
+          <span class="nc-title">性能监控</span>
+          <span class="nc-desc">系统负载 · 转码会话</span>
         </span>
       </button>
     </nav>

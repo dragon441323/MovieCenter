@@ -139,8 +139,9 @@ const playProbe = ref(null)
 const playProbing = ref(false)
 const subChoice = ref(-1)   // 在线播放字幕轨（-1 = 无字幕）
 const webSubIdx = ref(-1)   // 传给网页播放器的字幕轨
+const webTargetH = ref(1080) // 传给网页播放器的转码目标高度
 
-// 探测编码 + 按记忆偏好初始化字幕选择（默认中文优先自动选轨；上次选了"无字幕"则默认关）
+// 探测编码 + 按记忆偏好初始化字幕/分辨率选择（默认中文优先自动选轨；上次选了"无字幕"则默认关）
 async function probeForPlay() {
   playProbe.value = null
   playProbing.value = true
@@ -154,7 +155,17 @@ async function probeForPlay() {
   let pref = null
   try { pref = localStorage.getItem('mc_sub_pref') } catch {}
   subChoice.value = pref === 'off' ? -1 : (playProbe.value?.defaultSub ?? -1)
+  // 分辨率偏好：上次选过 4K 就保持 4K（源不够 4K 时服务端会自动取源高度）
+  let hp = null
+  try { hp = parseInt(localStorage.getItem('mc_target_h')) } catch {}
+  webTargetH.value = hp === 2160 ? 2160 : 1080
 }
+
+// 是否显示分辨率选择：源超过 1080p 才有意义（4K 片选 4K/1080p）
+const showQualityChoice = computed(() =>
+  (playProbe.value?.probe_ok && (playProbe.value.height || 0) > 1200) ||
+  (playProbe.value?.probe_ok && playProbe.value.mode === 'transcode' && (playProbe.value.height || 0) > 1080)
+)
 
 async function openPlayChoice() {
   playChoiceVisible.value = true
@@ -172,8 +183,11 @@ function subLabel(s) {
 function choosePlay(mode) {
   playChoiceVisible.value = false
   if (mode === 'web') {
-    // 记住字幕开关偏好（只记开/关，具体轨道不记，下次仍按中文优先自动选）
-    try { localStorage.setItem('mc_sub_pref', subChoice.value === -1 ? 'off' : 'auto') } catch {}
+    // 记住字幕/分辨率偏好
+    try {
+      localStorage.setItem('mc_sub_pref', subChoice.value === -1 ? 'off' : 'auto')
+      localStorage.setItem('mc_target_h', String(webTargetH.value))
+    } catch {}
     webSubIdx.value = subChoice.value
     visible.value = false // 关闭详情弹窗，全屏播放
     openWebPlayer()
@@ -829,7 +843,7 @@ async function onLookup(imdbId) {
     </div>
   </el-dialog>
 
-  <VideoPlayer v-model="webPlayerVisible" :movie="movie" :sub-idx="webSubIdx" />
+  <VideoPlayer v-model="webPlayerVisible" :movie="movie" :sub-idx="webSubIdx" :target-h="webTargetH" />
 
   <el-dialog v-model="playChoiceVisible" title="选择播放方式" width="480px" append-to-body>
     <div class="pc-probe" v-loading="playProbing">
@@ -848,6 +862,13 @@ async function onLookup(imdbId) {
       </el-select>
       <div class="pc-subs-tip">字幕将在服务器转码时烧进画面，播放中无法动态开关</div>
     </div>
+    <div class="pc-subs" v-if="showQualityChoice">
+      <div class="pc-subs-head">在线播放画质</div>
+      <el-radio-group v-model="webTargetH" size="small">
+        <el-radio-button :value="1080">1080p（流畅）</el-radio-button>
+        <el-radio-button :value="2160">4K 原画质（吃带宽）</el-radio-button>
+      </el-radio-group>
+    </div>
     <div class="pc-cards">
       <div class="pc-card" @click="choosePlay('web')">
         <div class="pc-icon"><el-icon :size="30"><Monitor /></el-icon></div>
@@ -855,9 +876,9 @@ async function onLookup(imdbId) {
           <div class="pc-title">在线播放</div>
           <div class="pc-desc">
             {{ playProbe?.mode === 'direct'
-              ? (subChoice >= 0 ? '选了字幕：将转码 1080p 并烧录字幕' : '原画质直连，浏览器直接播放')
+              ? (subChoice >= 0 ? '选了字幕：将转码并烧录字幕' : '原画质直连，浏览器直接播放')
               : playProbe?.mode === 'transcode'
-                ? '服务器转码 1080p，手机平板可看'
+                ? `服务器转码 ${webTargetH === 2160 ? '4K' : '1080p'}，手机平板可看`
                 : '手机 / 平板 / 电视浏览器均可' }}
           </div>
         </div>

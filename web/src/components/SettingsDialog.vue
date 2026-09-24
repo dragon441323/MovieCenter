@@ -59,6 +59,7 @@ async function loadSettings() {
     playerPath.value = s.player_path
     probeAvailable.value = s.probe_available
     doubanUid.value = s.douban_uid || ''
+    watchEnabled.value = s.watch_enabled !== false
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -268,6 +269,22 @@ const lastBackupTime = computed(() => {
 })
 
 const autostartOn = ref(false)
+const watchEnabled = ref(true)
+const watchSaving = ref(false)
+
+async function onWatchChange(v) {
+  watchSaving.value = true
+  try {
+    const s = await api.saveSettings({ watch_enabled: v })
+    watchEnabled.value = s.watch_enabled !== false
+    ElMessage.success(v ? '文件夹监听已开启' : '文件夹监听已关闭')
+  } catch (e) {
+    ElMessage.error(e.message)
+    watchEnabled.value = !v
+  } finally {
+    watchSaving.value = false
+  }
+}
 const autostartLoading = ref(false)
 const duplicatesVisible = ref(false)
 
@@ -653,6 +670,11 @@ async function cleanupMissing() {
             <el-switch v-model="autostartOn" :loading="autostartLoading" @change="onAutostartChange" />
             <span class="row-label-strong">开机自动启动</span>
             <span class="hint">登录 Windows 后后台运行服务，局域网设备随时可访问</span>
+          </div>
+          <div class="set-row">
+            <el-switch v-model="watchEnabled" :loading="watchSaving" @change="onWatchChange" />
+            <span class="row-label-strong">文件夹监听自动入库</span>
+            <span class="hint">监控扫描目录，有新电影放入后静默 30 秒自动扫描入库（无 ffprobe 时按文件名识别画质）</span>
           </div>
         </div>
       </el-tab-pane>
