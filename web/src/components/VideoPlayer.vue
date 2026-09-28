@@ -26,6 +26,13 @@ const showControls = ref(true)
 
 // 触屏设备（手机/平板）：点击/全屏/系统播放器行为与桌面不同
 const isTouch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
+// PWA 独立窗口 / 加到主屏的 App：没有浏览器返回键，播放器顶栏常驻不自动隐藏，保证随时能退出
+const isStandalone = (typeof matchMedia !== 'undefined' && matchMedia('(display-mode: standalone)').matches)
+  || window.navigator?.standalone === true
+// iOS/iPadOS 检测：iPadOS 13+ 的 Safari 默认把自己伪装成 Mac（platform=MacIntel），
+// 用触摸点数区分（iPad 报 5，Mac 没有触摸屏）。全屏时据此唤起系统自带播放器
+const isIOS = /iPad|iPhone|iPod/.test(navigator.platform || '')
+  || ((navigator.platform || '') === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)
 const canNativeHls = ref(false) // 浏览器原生支持 HLS（iOS Safari）→ 可交给系统播放器
 const handedOff = ref(false)    // 已把播放交给系统播放器
 
@@ -56,6 +63,7 @@ let progressTimer = null
 let controlsTimer = null
 let playbackReportTimer = null   // 在线播放进度上报（续播记忆 + 看完统计）
 let reportedDone = false         // 本次会话是否已上报"看完"（防重复）
+let playGen = 0                  // 播放流程代数：关闭/重开/重试都 +1；进行中的旧流程发现代数变了就中止
 
 const curPos = computed(() => (dragging.value ? scrub.value : cur.value))
 const playPct = computed(() => (dur.value ? Math.min(100, (curPos.value / dur.value) * 100) : 0))
@@ -77,6 +85,7 @@ const showSystemPlayer = computed(() => isTouch && (mode.value === 'direct' || (
 watch(videoRef, v => { if (v) canNativeHls.value = !!v.canPlayType('application/vnd.apple.mpegurl') })
 
 async function probeAndPlay() {
+  const gen = ++playGen
   state.value = 'probing'
   errorMsg.value = ''
   cur.value = 0
@@ -84,6 +93,7 @@ async function probeAndPlay() {
   baseStart.value = 0
   try {
     const p = await api.streamProbe(props.movie.id)
+    if (gen !== playGen) return // 探测期间播放器被关闭/重开：中止，别再建会话
     note.value = p.note || ''
     if (p.duration) dur.value = p.duration
     // 直连无法烧字幕 / 切音轨：选了字幕或非第一条音轨就强制走转码
@@ -92,10 +102,10 @@ async function probeAndPlay() {
       startDirect()
     } else {
       mode.value = 'transcode'
-      await startTranscode()
+      await startTranscode(gen)
     }
   } catch (e) {
-    fail(e.message)
+    if (gen === playGen) fail(e.message)
   }
 }
 
@@ -107,26 +117,33 @@ function startDirect() {
   state.value = 'buffering'
 }
 
-async function startTranscode() {
+async function startTranscode(gen) {
   try {
     const r = await api.streamTranscode(props.movie.id, null, props.subIdx, props.targetH, props.audioIdx)
+    if (gen !== playGen) {
+      // 会话已建但播放器已被关闭（点返回/换片太快）：立刻停掉，不留孤儿进程
+      api.streamStop(r.sid).catch(() => {})
+      return
+    }
     sid.value = r.sid
     baseStart.value = Number(r.startAt) || 0
     startHeartbeat()
     startProgressPoll()
-    await attachStream()
+    await attachStream(gen)
+    if (gen !== playGen) return
     state.value = 'buffering'
   } catch (e) {
-    fail(e.message)
+    if (gen === playGen) fail(e.message)
   }
 }
 
-async function attachStream() {
+async function attachStream(gen) {
   const v = videoRef.value
   const url = `/api/stream/session/${sid.value}/index.m3u8`
   applyVolume()
   let Hls = null
   try { Hls = (await import('hls.js')).default } catch {}
+  if (gen !== playGen) return // 关闭发生在 hls.js 动态导入期间：别再建实例（teardown 杀不到还没创建的它）
   if (Hls?.isSupported()) {
     // MSE 可用（Chrome/Edge/Firefox/桌面 Safari）：hls.js 转封装播放。
     // 注意不能用 canPlayType('...mpegurl') 判定走原生 HLS —— Chrome 也会返回 'maybe'，
@@ -165,27 +182,47 @@ async function attachStream() {
 async function restartTranscodeAt(t) {
   state.value = 'buffering'
   teardownSession()
+  const gen = ++playGen // 捕获新流程代数（teardown 已使旧代数失效）
   try {
     const r = await api.streamTranscode(props.movie.id, Math.round(t * 10) / 10, props.subIdx, props.targetH, props.audioIdx)
+    if (gen !== playGen) {
+      api.streamStop(r.sid).catch(() => {}) // 播放器已关闭：停掉刚建的会话
+      return
+    }
     sid.value = r.sid
     baseStart.value = Number(r.startAt) || t
     cur.value = baseStart.value
     startHeartbeat()
     startProgressPoll()
-    await attachStream()
+    await attachStream(gen)
   } catch (e) {
-    fail(e.message)
+    if (gen === playGen) fail(e.message)
   }
 }
 
 // ---------- 心跳 & 错误 ----------
 
-// 周期心跳：告诉服务器"会话还在用"，否则 10 分钟无心跳会被回收
+// 发一次心跳：告诉服务器"会话还在用"（10 分钟无任何请求会被回收），同时上报播放头
+// 与是否在播——服务器据此挂起暂停/缓冲充足的转码，不再后台空烧整部电影。
+// buffering 也算"要数据"（初始缓冲不能被挂起）；暂停/播完/移交系统播放器才算停
+function heartbeatOnce() {
+  if (!sid.value) return
+  const v = videoRef.value
+  api.streamHeartbeat(sid.value, {
+    playing: !handedOff.value && (state.value === 'playing' || state.value === 'buffering'),
+    pos: baseStart.value + (v?.currentTime || 0)
+  }).catch(() => {})
+}
+
 function startHeartbeat() {
   stopHeartbeat()
-  heartbeatTimer = setInterval(() => {
-    if (sid.value) api.streamHeartbeat(sid.value).catch(() => {})
-  }, 60 * 1000)
+  heartbeatTimer = setInterval(heartbeatOnce, 15 * 1000)
+}
+
+// PWA/手机切后台时定时器被节流甚至整个冻结：进出后台的瞬间立刻补一次心跳，
+// 给服务器一个新鲜的活跃时间，避免被"心跳丢失看门狗"误判挂起
+function onVisibilityChange() {
+  heartbeatOnce()
 }
 
 function stopHeartbeat() {
@@ -202,8 +239,31 @@ function startProgressPoll() {
       // 单调不减：LEVEL_UPDATED（播放列表实况）与管道值取大者，避免条纹回跳
       tcTo.value = Math.max(tcTo.value, r.transcodedTo || 0)
       tcDone.value = !!r.done
-    } catch { /* 会话已结束等，静默 */ }
+      maybeAutoRestart(r)
+    } catch (e) {
+      // 会话已不存在（闲置回收/服务重启），但播放器还在要数据 →
+      // 从当前播放头自动重开转码会话，无缝续播（30 秒内不重复触发）
+      if (e?.status === 404 && mode.value === 'transcode' && !handedOff.value
+        && (state.value === 'playing' || state.value === 'buffering')
+        && Date.now() - lastAutoRestart > 30 * 1000) {
+        lastAutoRestart = Date.now()
+        restartTranscodeAt(baseStart.value + (videoRef.value?.currentTime || 0))
+      }
+    }
   }, 3000)
+}
+
+// 转码已被挂起（暂停过/缓冲领先被收回）或 ffmpeg 中途退出，而播放器还在要数据、
+// 缓冲也快耗尽时 → 从当前播放头重启转码会话，自动无缝续上（30 秒内不重复触发）
+let lastAutoRestart = 0
+function maybeAutoRestart(r) {
+  if (mode.value !== 'transcode' || !sid.value || r.done || r.running) return
+  if (handedOff.value || (state.value !== 'playing' && state.value !== 'buffering')) return
+  const pos = baseStart.value + (videoRef.value?.currentTime || 0)
+  if (r.transcodedTo - pos > 60) return // 缓冲还够，不急
+  if (Date.now() - lastAutoRestart < 30 * 1000) return
+  lastAutoRestart = Date.now()
+  restartTranscodeAt(Math.max(pos, 0))
 }
 
 function stopProgressPoll() {
@@ -220,6 +280,7 @@ function fail(msg) {
 }
 
 function teardownSession() {
+  playGen++ // 使仍在探测/建会话途中的旧播放流程失效（旧流程会在下个 await 后自行中止）
   stopHeartbeat()
   stopProgressPoll()
   stopPlaybackReport()
@@ -329,9 +390,15 @@ function toggleFullscreen() {
     ;(document.exitFullscreen || document.webkitExitFullscreen)?.call(document)
     return
   }
+  // iPhone / iPad：唤起系统自带播放器全屏（AirPlay、系统控制条、横竖屏体验更好）。
+  // iPad 上页面元素全屏 API 虽然可用，但触屏端一律交给系统播放器
+  if (isIOS && v.webkitEnterFullscreen) {
+    try { v.webkitEnterFullscreen() } catch {}
+    return
+  }
   if (el.requestFullscreen) el.requestFullscreen()
   else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen()
-  else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen() // iOS：无元素全屏 API，交给系统播放器接管
+  else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen()
 }
 
 // 手机：单击只呼出控制条，双击全屏；桌面：单击播放/暂停，双击全屏
@@ -529,11 +596,14 @@ onMounted(() => {
   document.addEventListener('mousemove', wakeControls)
   // 页面刷新/关闭标签时保底停止转码会话（keepalive 请求在页面卸载后仍会送达）
   window.addEventListener('pagehide', onUnloadStop)
+  // PWA 切后台/回前台：立刻补一次心跳（后台定时器会被节流甚至冻结）
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('mousemove', wakeControls)
   window.removeEventListener('pagehide', onUnloadStop)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   setPageScrollLock(false)
   teardownSession()
 })
@@ -591,8 +661,8 @@ const stateLabel = {
           </div>
         </div>
 
-        <!-- 顶栏 -->
-        <div class="vp-top" :class="{ hidden: !showControls && state === 'playing' }">
+        <!-- 顶栏（PWA 独立模式常驻显示：没有浏览器返回键，必须保证随时能退出） -->
+        <div class="vp-top" :class="{ hidden: !showControls && state === 'playing' && !isStandalone }">
           <el-button circle @click="close"><el-icon><ArrowLeft /></el-icon></el-button>
           <div class="vp-title">
             <span class="t">{{ movie.title }}</span>
@@ -712,11 +782,24 @@ const stateLabel = {
   background: linear-gradient(rgba(0,0,0,0.65), transparent);
   user-select: none;
 }
-.vp-top { top: 0; }
+/* 安全区：iOS PWA（黑透明状态栏 + viewport-fit=cover）页面会延伸到状态栏/刘海底下，
+   不补 inset 的话返回键被系统状态栏盖住点不到，PWA 里就"没有返回键"了 */
+.vp-top {
+  top: 0;
+  padding:
+    calc(14px + env(safe-area-inset-top))
+    calc(18px + env(safe-area-inset-right))
+    14px
+    calc(18px + env(safe-area-inset-left));
+}
 .vp-bottom {
   bottom: 0;
   background: linear-gradient(transparent, rgba(0,0,0,0.65));
-  padding: 8px 18px 12px;
+  padding:
+    8px
+    calc(18px + env(safe-area-inset-right))
+    calc(12px + env(safe-area-inset-bottom))
+    calc(18px + env(safe-area-inset-left));
 }
 .vp-top.hidden { opacity: 0; transform: translateY(-8px); pointer-events: none; }
 .vp-bottom.hidden { opacity: 0; transform: translateY(8px); pointer-events: none; }

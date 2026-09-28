@@ -10,8 +10,14 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "web\dist\index.html" (
-  echo [moviecenter] 首次启动，正在构建前端界面（约 1 分钟，仅此一次）...
+:: ---------- 前端：dist 缺失或源码有更新时自动重新构建 ----------
+set "WEB_NEED_BUILD=0"
+if not exist "web\dist\index.html" set "WEB_NEED_BUILD=1"
+for /f "delims=" %%T in ('powershell -NoProfile -Command "$s=0; Get-ChildItem -Recurse -File 'web\src' | ForEach-Object { if ($_.LastWriteTimeUtc.Ticks -gt $s) { $s=$_.LastWriteTimeUtc.Ticks } }; foreach($f in @('web\index.html','web\vite.config.js','web\package.json')) { if (Test-Path $f) { $t=(Get-Item $f).LastWriteTimeUtc.Ticks; if ($t -gt $s) { $s=$t } } }; if (-not (Test-Path 'web\dist\index.html')) { '1' } else { $d=(Get-Item 'web\dist\index.html').LastWriteTimeUtc.Ticks; if ($s -gt $d) { '1' } else { '0' } }" 2^>nul') do set "WEB_NEED_BUILD=%%T"
+
+if "%WEB_NEED_BUILD%"=="1" (
+  if not exist "web\dist\index.html" echo [moviecenter] 首次启动，正在构建前端界面（约 1 分钟）...
+  if exist "web\dist\index.html" echo [moviecenter] 检测到前端源码有更新，正在重新构建（约 10 秒）...
   call :npm_install web
   if errorlevel 1 goto fail
   pushd web

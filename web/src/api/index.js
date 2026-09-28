@@ -6,7 +6,11 @@ async function request(method, url, body) {
   })
   let data = null
   try { data = await res.json() } catch {}
-  if (!res.ok) throw new Error(data?.error || `请求失败 (${res.status})`)
+  if (!res.ok) {
+    const err = new Error(data?.error || `请求失败 (${res.status})`)
+    err.status = res.status // 供调用方区分"会话已结束"(404) 与网络故障等
+    throw err
+  }
   return data
 }
 
@@ -123,7 +127,7 @@ export const api = {
     ...(targetHeight != null ? { targetHeight } : {}),
     ...(audioIdx != null ? { audioIdx } : {})
   }),
-  streamHeartbeat: sid => request('POST', `/api/stream/session/${sid}/heartbeat`),
+  streamHeartbeat: (sid, body) => request('POST', `/api/stream/session/${sid}/heartbeat`, body),
   streamProgress: sid => request('GET', `/api/stream/session/${sid}/progress`),
   streamStop: sid => request('POST', `/api/stream/session/${sid}/stop`),
   // 在线播放进度上报（续播位置 + 看完统计）

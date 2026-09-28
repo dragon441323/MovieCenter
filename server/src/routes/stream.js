@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { db } from '../db.js'
 import {
   probeMovieCodecs, canDirectPlay, directStream,
-  startTranscode, getSession, touchSession, stopSession, serveHlsPart, sessionProgress, transcodeStats
+  startTranscode, getSession, touchSession, touchSessionFetch, stopSession, serveHlsPart, sessionProgress, transcodeStats
 } from '../stream.js'
 
 export const streamRouter = Router()
@@ -79,15 +79,16 @@ streamRouter.post('/:id/transcode', async (req, res) => {
   }
 })
 
-/** 会话心跳 */
+/** 会话心跳（body 可带 { pos, playing }：服务器据此挂起暂停/缓冲充足的转码） */
 streamRouter.post('/session/:sid/heartbeat', (req, res) => {
-  const s = touchSession(req.params.sid)
+  const s = touchSession(req.params.sid, req.body)
   if (!s) return res.status(404).json({ error: '会话已结束' })
   res.json({ ok: true, stats: transcodeStats() })
 })
 
 /** 会话转码进度（播放器进度条上的"已转码"区域）。注意要放在 /:file 通配路由之前 */
 streamRouter.get('/session/:sid/progress', (req, res) => {
+  touchSession(req.params.sid) // 播放端还活着（3 秒一拉），刷新活跃时间供看门狗判定
   const p = sessionProgress(req.params.sid)
   if (!p) return res.status(404).json({ error: '会话已结束' })
   res.json(p)
@@ -101,6 +102,7 @@ streamRouter.post('/session/:sid/stop', (req, res) => {
 
 /** HLS：m3u8 与分段（:sid 为会话，:file 为文件名） */
 streamRouter.get('/session/:sid/:file', async (req, res) => {
+  touchSessionFetch(req.params.sid) // 拉流 = 仍有消费方（含系统播放器标签页），刷新活跃时间
   await serveHlsPart(req, res, req.params.sid, req.params.file)
 })
 

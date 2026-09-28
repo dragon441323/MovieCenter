@@ -390,11 +390,20 @@ export async function startTranscode(movieId, startAt = 0, subIdx, targetHeight 
   // 组装某后端的视频参数（流映射 + 滤镜链 + 编码器）。
   // 基础链：按需缩放到目标高度 + 按需 HDR→SDR；统一 8-bit（浏览器 H.264 只支持 8-bit，
   // 10-bit 源不强制转换会输出 High 10 profile，网页一律黑屏/无法播放）
-  const buildVideo = (outFmt, enc) => {
-    const chain = [
-      ...(needScale ? [`scale=${targetW}:-2:flags=bicubic`] : []),
-      ...(hdr ? [TONEMAP] : [])
-    ]
+  // gpu=true 用混合链：CUDA 帧先在 GPU 上 scale_cuda 缩放、再拷回内存做色调映射/字幕
+  // 叠加（烧字幕必须在 CPU 帧上），最后交给 NVENC。缩放与编码都不占 CPU，且 4K HDR
+  // 源的 CPU 滤镜量降到 1080p（比纯 CPU 链省约 4/5 的 CPU，多路并发时差距明显）
+  const buildVideo = (outFmt, enc, gpu = false) => {
+    const chain = gpu
+      ? [
+          ...(needScale ? [`scale_cuda=${targetW}:-2`] : []),
+          'hwdownload',
+          ...(hdr ? ['format=p010le', TONEMAP, 'format=yuv420p'] : ['format=yuv420p'])
+        ]
+      : [
+          ...(needScale ? [`scale=${targetW}:-2:flags=bicubic`] : []),
+          ...(hdr ? [TONEMAP] : [])
+        ]
     if (!sub) return ['-map', '0:v:0', '-vf', [...chain, `format=${outFmt}`].join(','), ...enc]
     if (sub.kind === 'pgs') {
       // 图形字幕（蓝光 PGS / DVB）：解码成带 alpha 的帧后在 filter_complex 里叠加。
@@ -410,22 +419,32 @@ export async function startTranscode(movieId, startAt = 0, subIdx, targetHeight 
     return ['-map', '0:v:0', '-vf', [...chain, subFilter, `format=${outFmt}`].join(','), ...enc]
   }
 
+  // NVENC 编码参数（全 GPU 链与烧字幕混合链共用）
+  const NVENC_ENC = ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '27', '-maxrate', maxrate, '-bufsize', bufsize, '-b:v', '0']
+
   // 转码后端，按优先级尝试（多 GPU 机器上 QSV/d3d11 会话初始化常失败，故只做这四种组合）
   const backends = [
-    ...(sub ? [] : [{
-      // NVIDIA 全 GPU 管线：硬解 + GPU 缩放 + NVENC 硬编（需较新显卡驱动，旧驱动秒退自动降级）。
-      // 烧字幕需在 CPU 帧上叠加/渲染，此时跳过全 GPU 后端走 nvdec（实测代价仅 ~2%）
-      name: 'nvenc',
-      hwaccel: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
-      video: [
-        '-map', '0:v:0',
-        '-vf', (hdr
-          ? [...(needScale ? [`scale_cuda=${targetW}:-2`] : []), 'hwdownload', 'format=p010le', TONEMAP, 'format=nv12']
-          : [needScale ? `scale_cuda=${targetW}:-2:format=nv12` : 'scale_cuda=format=nv12']
-        ).join(','),
-        '-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '27', '-maxrate', maxrate, '-bufsize', bufsize, '-b:v', '0'
-      ]
-    }]),
+    sub
+      ? {
+          // 烧字幕的 NVENC 混合链：GPU 解码/缩放/编码，CPU 只做色调映射与字幕叠加。
+          // （旧逻辑烧字幕时整体跳过 nvenc → 落到 libx264/QSV 软编，多路并发时 CPU 告急）
+          name: 'nvenc',
+          hwaccel: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
+          video: buildVideo('nv12', NVENC_ENC, true)
+        }
+      : {
+          // NVIDIA 全 GPU 管线：硬解 + GPU 缩放 + NVENC 硬编（需较新显卡驱动，旧驱动秒退自动降级）
+          name: 'nvenc',
+          hwaccel: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
+          video: [
+            '-map', '0:v:0',
+            '-vf', (hdr
+              ? [...(needScale ? [`scale_cuda=${targetW}:-2`] : []), 'hwdownload', 'format=p010le', TONEMAP, 'format=nv12']
+              : [needScale ? `scale_cuda=${targetW}:-2:format=nv12` : 'scale_cuda=format=nv12']
+            ).join(','),
+            ...NVENC_ENC
+          ]
+        },
     {
       // NVIDIA 硬解（帧拷回内存）+ CPU 滤镜 + x264 软编：驱动旧也能吃到 GPU 解码
       name: 'nvdec',
@@ -567,14 +586,15 @@ async function trySpawn(backend, session, pos, videoFile, dir, acceptOnTimeout =
         finish(false)
         return
       }
-      // 运行期退出（全片转完 / 出错 / 被停止），分段文件保留供继续 seek
-      console.log(`[stream] ffmpeg(${session.backend}) exited code=${code}`)
-      if (code !== 0 && stderr) console.error('[stream] ffmpeg stderr:', stderr.slice(-500))
+      // 运行期退出（全片转完 / 出错 / 被停止 / 主动挂起），分段文件保留供继续 seek
       const s = sessions.get(session.sid)
       if (s) {
         s.ffmpeg = null
+        if (s.suspended) { s.suspended = false; return } // 挂起触发的退出：非异常，不刷日志
         if (code === 0) s.progressDone = true // 干净退出 = 全片转完（含 ENDLIST）
       }
+      console.log(`[stream] ffmpeg(${session.backend}) exited code=${code}`)
+      if (code !== 0 && stderr) console.error('[stream] ffmpeg stderr:', stderr.slice(-500))
     })
     // m3u8 文件出现 = 首个分段完成、播放列表已可播。
     // 用 statSync（不开文件句柄）判断：Node 读文件不带 FILE_SHARE_DELETE，
@@ -595,14 +615,23 @@ async function trySpawn(backend, session, pos, videoFile, dir, acceptOnTimeout =
         }
       } catch { /* m3u8 尚未生成 */ }
     }, 400)
-    // 保底：20 秒未产出分段则放弃该后端
-    giveUpTimer = setTimeout(() => {
-      if (acceptOnTimeout && child.exitCode === null && !child.killed) {
-        finish(true) // 兜底后端很慢但活着：接受
-      } else {
-        session.lastError = '20 秒内未产出第一个 HLS 分段'
-        finish(false)
+    // 保底：20 秒未产出分段则放弃该后端。
+    // 例外：-progress 管道显示编码器仍在推进（高并发下首段慢，并非卡死）时最多放宽到
+    // 60 秒——否则并发高峰会把健康的 nvenc/nvdec 误判为失败，雪崩降级到纯 CPU 软解
+    const spawnT0 = Date.now()
+    giveUpTimer = setTimeout(function giveUp() {
+      if (child.exitCode === null && !child.killed) {
+        if (session.transcodedUs > 0 && Date.now() - spawnT0 < 60000) {
+          giveUpTimer = setTimeout(giveUp, 5000)
+          return
+        }
+        if (acceptOnTimeout) {
+          finish(true) // 兜底后端很慢但活着：接受
+          return
+        }
       }
+      session.lastError = '时限内未产出第一个 HLS 分段'
+      finish(false)
     }, 20000)
   })
 }
@@ -612,10 +641,72 @@ export function getSession(sid) {
   return sessions.get(sid) || null
 }
 
-export function touchSession(sid) {
+// ---------- 转码挂起 ----------
+// 暂停播放或缓冲领先播放头太多时杀掉 ffmpeg（会话与已转码分段保留），
+// 由播放端在缓冲将耗尽时自动重启转码。网页播放器前端只缓冲 ~30s，
+// 没有挂起时挂着页面人走开了，服务器会把整部电影在后台转完，挤占其它会话的 CPU
+const SUSPEND_AHEAD_SEC = 120  // 缓冲领先播放头超过此秒数 → 挂起
+const SUSPEND_TAIL_SEC = 180   // 距片尾不足此秒数不挂起，让它一口气转完收尾
+
+function suspendSession(s, reason) {
+  if (!s.ffmpeg) return
+  s.suspended = true
+  const proc = s.ffmpeg
+  s.ffmpeg = null
+  try { proc.kill('SIGKILL') } catch {}
+  console.log(`[stream] 挂起转码 sid=${s.sid}（${reason}），已转码分段保留`)
+}
+
+function maybeSuspend(s) {
+  if (!s.ffmpeg || s.playing == null) return
+  // 近 30 秒仍有人在拉流（m3u8/分段，如手机"系统播放器"打开的标签页）：
+  // 有消费方在看，即使心跳说暂停也不能挂起
+  if (s.lastFetch && Date.now() - s.lastFetch < 30 * 1000) return
+  const transcodedTo = s.startAt + (s.transcodedUs || 0) / 1e6
+  const remaining = s.totalDuration ? s.totalDuration - transcodedTo : 0
+  if (remaining > 0 && remaining < SUSPEND_TAIL_SEC) return
+  if (s.playing === false) { suspendSession(s, '播放暂停'); return }
+  if (s.playhead != null && transcodedTo - s.playhead > SUSPEND_AHEAD_SEC) {
+    suspendSession(s, `缓冲领先播放头 ${Math.round(transcodedTo - s.playhead)}s`)
+  }
+}
+
+// 心跳丢失看门狗：播放端被强杀（iOS PWA 上划关闭、手机杀后台、浏览器崩溃）时，
+// pagehide 的停止请求经常无法送达。播放端的任何请求（心跳/进度/拉分段）都会刷新
+// lastTouch；若 ffmpeg 还活着却 45 秒没有任何请求，判定播放端已死 → 挂起转码。
+// 僵尸转码的最长存活时间由闲置回收的 10 分钟压缩到约 1 分钟。
+const HEARTBEAT_LOST_MS = 45 * 1000
+const suspendWatchdog = setInterval(() => {
+  for (const s of sessions.values()) {
+    if (!s.ffmpeg) continue
+    if (Date.now() - s.lastTouch > HEARTBEAT_LOST_MS) {
+      suspendSession(s, `心跳丢失 ${Math.round((Date.now() - s.lastTouch) / 1000)}s（播放端已关闭或失联）`)
+    }
+  }
+}, 15 * 1000)
+suspendWatchdog.unref?.()
+
+export function touchSession(sid, state) {
   const s = sessions.get(sid)
   if (!s) return null
   s.lastTouch = Date.now()
+  // 播放端心跳带上播放头与是否在播：暂停/缓冲充足时挂起后台转码省资源
+  // （旧客户端不带这些字段 → 永不挂起，行为与从前一致）
+  if (state) {
+    if (Number.isFinite(state.pos)) s.playhead = Math.max(0, Number(state.pos))
+    if (typeof state.playing === 'boolean') s.playing = state.playing
+  }
+  maybeSuspend(s)
+  scheduleCleanup(s)
+  return s
+}
+
+/** 拉流请求（m3u8/分段）刷新活跃时间：仍有人在消费（含系统播放器标签页），不能挂起/回收 */
+export function touchSessionFetch(sid) {
+  const s = sessions.get(sid)
+  if (!s) return null
+  s.lastTouch = Date.now()
+  s.lastFetch = s.lastTouch
   scheduleCleanup(s)
   return s
 }
