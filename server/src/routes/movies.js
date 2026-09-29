@@ -258,9 +258,23 @@ movieRouter.get('/rows', (req, res) => {
   const top250 = db.prepare(
     'SELECT * FROM movie WHERE missing = 0 AND douban_rank IS NOT NULL ORDER BY douban_rank LIMIT 12'
   ).all()
-  const featured = db.prepare(
-    "SELECT * FROM movie WHERE missing = 0 AND cover != '' ORDER BY COALESCE(douban_rating, rating, 0) DESC LIMIT 8"
-  ).all()
+  // 首页银幕:有海报的片每天一组(按日期做种子的伪随机洗牌),不看评分;同一天内固定
+  // 用本地时区日期(toISOString 是 UTC,晚上 8 点后会提前变"明天")
+  const now0 = new Date()
+  const dayKey = `${now0.getFullYear()}${String(now0.getMonth() + 1).padStart(2, '0')}${String(now0.getDate()).padStart(2, '0')}`
+  // mulberry32:日期做种子的确定性 PRNG,同一天结果一致、隔天洗出不同顺序
+  let seed = Number(dayKey) % 2147483647
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296
+    return seed / 4294967296
+  }
+  const pool = db.prepare("SELECT * FROM movie WHERE missing = 0 AND cover != ''").all()
+  // Fisher–Yates 洗牌后取前 8
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1))
+    ;[pool[i], pool[j]] = [pool[j], pool[i]]
+  }
+  const featured = pool.slice(0, 8)
   res.json({
     recent_watched: attachTags(recent),
     top_unwatched: attachTags(topUnwatched),
@@ -489,7 +503,7 @@ movieRouter.post('/:id/watch', (req, res) => {
   res.json(attachTags([updated])[0])
 })
 
-// 首选播放器：POST play 时同步记一次观看 + 写日记
+// 首选播放器：只唤起本地播放器，不自动计数/写日记（看完可手动标已看，在线播放看够 90% 会自动记）
 movieRouter.post('/:id/play', (req, res) => {
   const id = parseId(req.params.id)
   if (!id) return res.status(400).json({ error: '无效的 ID' })
@@ -498,14 +512,6 @@ movieRouter.post('/:id/play', (req, res) => {
   if (row.missing) return res.status(400).json({ error: '该电影文件已缺失，无法播放' })
   try {
     playFile(row.video_file)
-    const now = new Date().toISOString()
-    db.prepare(`
-      UPDATE movie SET watch_count = watch_count + 1, watched = 1, last_watched_at = ?,
-        updated_at = datetime('now') WHERE id = ?
-    `).run(now, id)
-    db.prepare(
-      'INSERT INTO watch_log (movie_id, watched_at, rating, note, source) VALUES (?, ?, ?, ?, ?)'
-    ).run(id, now, row.my_rating ?? null, '', 'play')
     res.json({ ok: true })
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message })

@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
-import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Present, Notebook, StarFilled, Collection, Monitor, Film } from '@element-plus/icons-vue'
+import { Setting, DataAnalysis, CircleCheck, VideoPlay, Star, Trophy, Coin, Grid, MagicStick, Notebook, StarFilled, Collection, Monitor, Film } from '@element-plus/icons-vue'
 import { useLibraryStore } from '../stores/library'
 import { api } from '../api'
 import { formatSize } from '../utils'
@@ -11,6 +11,7 @@ import Logo from '../components/Logo.vue'
 import GlobalSearch from '../components/GlobalSearch.vue'
 import MovieCard from '../components/MovieCard.vue'
 import MovieDetail from '../components/MovieDetail.vue'
+import BlindBoxDialog from '../components/BlindBoxDialog.vue'
 import SettingsDialog from '../components/SettingsDialog.vue'
 
 const store = useLibraryStore()
@@ -86,6 +87,9 @@ async function pickTonight() {
   }
 }
 
+// 「今晚看什么」→ 盲盒放映弹窗
+const blindBoxVisible = ref(false)
+
 function onUpdated(movie) {
   detailMovie.value = movie
   store.fetchRows()
@@ -113,8 +117,8 @@ onMounted(() => {
         <Logo class="logo" />
         <span>电影中心</span>
       </div>
-      <el-button class="pick-btn" round :loading="picking" @click="pickTonight">
-        <el-icon v-if="!picking"><MagicStick /></el-icon>&nbsp;今晚看什么
+      <el-button class="pick-btn" round @click="blindBoxVisible = true">
+        <el-icon><MagicStick /></el-icon>&nbsp;今晚看什么
       </el-button>
       <GlobalSearch @open-movie="onOpenMovie" />
       <el-tooltip content="扫描目录 / 设置" placement="bottom">
@@ -138,13 +142,6 @@ onMounted(() => {
         <span class="nc-body">
           <span class="nc-title">影讯</span>
           <span class="nc-desc">正在热映 · 即将上映</span>
-        </span>
-      </button>
-      <button class="nav-card" @click="$router.push('/blindbox')">
-        <span class="nc-icon" style="--c: #d99a4e"><el-icon :size="22"><Present /></el-icon></span>
-        <span class="nc-body">
-          <span class="nc-title">盲盒放映</span>
-          <span class="nc-desc">随机拆一部，支持按口味</span>
         </span>
       </button>
       <button class="nav-card" @click="$router.push('/wishlist')">
@@ -312,6 +309,7 @@ onMounted(() => {
     </main>
 
     <MovieDetail ref="detailRef" v-model="detailVisible" :movie="detailMovie" @updated="onUpdated" @open-movie="onOpenMovie" @open-person="goPerson" />
+    <BlindBoxDialog v-model="blindBoxVisible" />
     <SettingsDialog v-model="settingsVisible" />
   </div>
 </template>
