@@ -31,6 +31,32 @@ function buildIndex() {
 const NEWS_POSTERS_DIR = path.join(COVERS_DIR, 'news')
 try { fs.mkdirSync(NEWS_POSTERS_DIR, { recursive: true }) } catch {}
 
+/** 清理影讯海报缓存：30 天未访问(atime)的文件删除。榜单天天换,不清只会无限增长 */
+function cleanNewsPosters() {
+  const cutoff = Date.now() - 30 * 24 * 3600 * 1000
+  let removed = 0
+  const walk = dir => {
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) { walk(p); continue }
+      try {
+        const st = fs.statSync(p)
+        const atime = Math.max(st.atimeMs, st.mtimeMs)
+        if (atime < cutoff) { fs.rmSync(p, { force: true }); removed++ }
+      } catch {}
+    }
+    // 空子目录(profile)也顺带删
+    try { if (dir !== NEWS_POSTERS_DIR && !fs.readdirSync(dir).length) fs.rmdirSync(dir) } catch {}
+  }
+  walk(NEWS_POSTERS_DIR)
+  if (removed) console.log(`[news] 清理过期海报缓存 ${removed} 个文件`)
+}
+cleanNewsPosters()
+const posterCleanTimer = setInterval(cleanNewsPosters, 24 * 3600 * 1000)
+posterCleanTimer.unref?.()
+
 /** 影讯海报：按 tmdb_id 落地缓存（浏览器直连 image.tmdb.org 不通，走服务端经代理下载）*/
 function newsPosterUrl(m) {
   if (!m.poster_path) return ''

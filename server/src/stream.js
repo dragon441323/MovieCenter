@@ -231,10 +231,18 @@ export function transcodeStats() {
 }
 
 /** 监控页用：全部转码会话详情（含影片名/后端/进度） */
+let movieNamesCache = { at: 0, names: new Map() }
+function getMovieNames() {
+  if (Date.now() - movieNamesCache.at > 60 * 1000) {
+    movieNamesCache = {
+      at: Date.now(),
+      names: new Map(db.prepare('SELECT id, title FROM movie').all().map(r => [r.id, r.title]))
+    }
+  }
+  return movieNamesCache.names
+}
 export function getSessionDetails() {
-  const names = new Map(
-    db.prepare('SELECT id, title FROM movie').all().map(r => [r.id, r.title])
-  )
+  const names = getMovieNames()
   return [...sessions.values()].map(s => ({
     sid: s.sid,
     movie_id: s.movieId,

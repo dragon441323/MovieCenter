@@ -10,8 +10,11 @@ const LANGS = ['zh-CN', 'zh-TW', 'en-US']
 function getSettings() {
   const rows = db.prepare('SELECT "key", value FROM settings').all()
   const map = Object.fromEntries(rows.map(r => [r.key, r.value]))
+  const rawKey = map.tmdb_api_key || ''
   return {
-    tmdb_api_key: map.tmdb_api_key || '',
+    // 只回掩码：局域网内任何设备都不该拿到完整 key（保存时传掩码/空 = 不修改）
+    tmdb_api_key: rawKey ? rawKey.slice(0, 6) + '****' + rawKey.slice(-4) : '',
+    tmdb_api_key_set: !!rawKey,
     tmdb_language: LANGS.includes(map.tmdb_language) ? map.tmdb_language : 'zh-CN',
     tmdb_proxy: map.tmdb_proxy || '',
     player_path: map.player_path || '',
@@ -30,7 +33,13 @@ settingsRouter.get('/', async (req, res) => {
 
 settingsRouter.put('/', async (req, res) => {
   const b = req.body || {}
-  if ('tmdb_api_key' in b) upsert('tmdb_api_key', String(b.tmdb_api_key || '').trim())
+  if ('tmdb_api_key' in b) {
+    const key = String(b.tmdb_api_key || '').trim()
+    // 掩码/空值 = 保持原 key 不变；只有真实输入新 key 才覆盖
+    if (key && !/^\*+$/.test(key) && !key.includes('****')) {
+      upsert('tmdb_api_key', key)
+    }
+  }
   if ('tmdb_proxy' in b) {
     const proxy = String(b.tmdb_proxy || '').trim().replace(/\/+$/, '')
     if (proxy && !/^https?:\/\/.+/i.test(proxy)) {

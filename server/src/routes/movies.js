@@ -543,6 +543,14 @@ movieRouter.post('/:id/reprobe', async (req, res) => {
  */
 const watchProgress = new Map() // movieId -> { position, duration, updatedAt }
 const WATCH_DONE_RATIO = 0.9
+// 看一半关掉的条目会一直留在内存（看完才 delete）：7 天未上报的过期清理
+const WATCH_PROGRESS_TTL = 7 * 24 * 3600 * 1000
+setInterval(() => {
+  const cutoff = Date.now() - WATCH_PROGRESS_TTL
+  for (const [id, p] of watchProgress) {
+    if (p.updatedAt < cutoff) watchProgress.delete(id)
+  }
+}, 24 * 3600 * 1000).unref?.()
 
 movieRouter.post('/:id/playback', (req, res) => {
   const id = parseId(req.params.id)
